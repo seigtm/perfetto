@@ -13,6 +13,7 @@
 // limitations under the License.
 
 import {AsyncLimiter} from '../base/async_limiter';
+import {defer} from '../base/deferred';
 import {assertExists, assertTrue} from '../base/logging';
 import {createProxy, getOrCreate} from '../base/utils';
 import {ServiceWorkerController} from '../frontend/service_worker_controller';
@@ -21,12 +22,12 @@ import {SqlPackage} from '../public/extra_sql_packages';
 import {FeatureFlagManager, FlagSettings} from '../public/feature_flag';
 import {PageHandler} from '../public/page';
 import {Raf} from '../public/raf';
-import {RouteArgs} from '../public/route_schema';
+import {RouteArg, RouteArgs} from '../public/route_schema';
 import {Setting, SettingsManager} from '../public/settings';
 import {DurationPrecision, TimestampFormat} from '../public/timeline';
 import {NewEngineMode} from '../trace_processor/engine';
 import {AnalyticsInternal, initAnalytics} from './analytics_impl';
-import {CommandManagerImpl} from './command_manager';
+import {CommandInvocation, CommandManagerImpl} from './command_manager';
 import {featureFlags} from './feature_flags';
 import {loadTrace} from './load_trace';
 import {OmniboxManagerImpl} from './omnibox_manager';
@@ -39,7 +40,12 @@ import {SettingsManagerImpl} from './settings_manager';
 import {SidebarManagerImpl} from './sidebar_manager';
 import {SerializedAppState} from './state_serialization_schema';
 import {TraceContext, TraceImpl} from './trace_impl';
-import {PostedTrace, TraceSource} from './trace_source';
+import {TraceArrayBufferSource, TraceSource} from './trace_source';
+
+export type OpenTraceArrayBufArgs = Omit<
+  Omit<TraceArrayBufferSource, 'type'>,
+  'serializedAppState'
+>;
 
 // The args that frontend/index.ts passes when calling AppImpl.initialize().
 // This is to deal with injections that would otherwise cause circular deps.
@@ -49,6 +55,9 @@ export interface AppInitArgs {
   readonly timestampFormatSetting: Setting<TimestampFormat>;
   readonly durationPrecisionSetting: Setting<DurationPrecision>;
   readonly timezoneOverrideSetting: Setting<string>;
+  readonly analyticsSetting: Setting<boolean>;
+  readonly startupCommandsSetting: Setting<CommandInvocation[]>;
+  readonly enforceStartupCommandAllowlistSetting: Setting<boolean>;
 }
 
 /**
@@ -86,6 +95,17 @@ export class AppContext {
   // via is_internal_user.js
   extraSqlPackages: SqlPackage[] = [];
 
+  // This is normally empty and is injected with Base64-encoded protobuf
+  // descriptor sets via is_internal_user.js.
+  extraParsingDescriptors: string[] = [];
+
+  // This is normally empty and is injected with extra google-internal macros
+  // via is_internal_user.js
+  extraMacros: Record<string, CommandInvocation[]>[] = [];
+
+  // Promise which is resolved when extra loading is completed.
+  extrasLoadingDeferred = defer<undefined>();
+
   // The currently open trace.
   currentTrace?: TraceContext;
 
@@ -103,6 +123,9 @@ export class AppContext {
   readonly timestampFormat: Setting<TimestampFormat>;
   readonly durationPrecision: Setting<DurationPrecision>;
   readonly timezoneOverride: Setting<string>;
+  readonly startupCommandsSetting: Setting<CommandInvocation[]>;
+  readonly enforceStartupCommandAllowlistSetting: Setting<boolean>;
+  private _isInternalUser?: boolean;
 
   // This constructor is invoked only once, when frontend/index.ts invokes
   // AppMainImpl.initialize().
@@ -110,6 +133,9 @@ export class AppContext {
     this.timestampFormat = initArgs.timestampFormatSetting;
     this.durationPrecision = initArgs.durationPrecisionSetting;
     this.timezoneOverride = initArgs.timezoneOverrideSetting;
+    this.startupCommandsSetting = initArgs.startupCommandsSetting;
+    this.enforceStartupCommandAllowlistSetting =
+      initArgs.enforceStartupCommandAllowlistSetting;
     this.settingsManager = initArgs.settingsManager;
     this.initArgs = initArgs;
     this.initialRouteArgs = initArgs.initialRouteArgs;
@@ -122,7 +148,11 @@ export class AppContext {
       disabled: this.embeddedMode,
       hidden: this.initialRouteArgs.hideSidebar,
     });
-    this.analytics = initAnalytics(this.testingMode, this.embeddedMode);
+    this.analytics = initAnalytics(
+      this.testingMode,
+      this.embeddedMode,
+      initArgs.analyticsSetting.get(),
+    );
     this.pluginMgr = new PluginManagerImpl({
       forkForPlugin: (pluginId) => this.forPlugin(pluginId),
       get trace() {
@@ -159,6 +189,19 @@ export class AppContext {
     this.closeCurrentTrace();
     this.currentTrace = traceCtx;
   }
+
+  get isInternalUser() {
+    if (this._isInternalUser === undefined) {
+      this._isInternalUser = localStorage.getItem('isInternalUser') === '1';
+    }
+    return this._isInternalUser;
+  }
+
+  set isInternalUser(value: boolean) {
+    localStorage.setItem('isInternalUser', value ? '1' : '0');
+    this._isInternalUser = value;
+    raf.scheduleFullRedraw();
+  }
 }
 
 /*
@@ -170,9 +213,7 @@ export class AppContext {
 
 export class AppImpl implements App {
   readonly pluginId: string;
-  readonly initialPluginRouteArgs: {
-    [key: string]: number | boolean | string;
-  };
+  readonly initialPluginRouteArgs: RouteArgs;
   private readonly appCtx: AppContext;
   private readonly pageMgrProxy: PageManagerImpl;
 
@@ -193,7 +234,7 @@ export class AppImpl implements App {
     this.appCtx = appCtx;
     this.pluginId = pluginId;
 
-    const args: {[key: string]: string | number | boolean} = {};
+    const args: {[key: string]: RouteArg} = {};
     this.initialPluginRouteArgs = Object.entries(
       appCtx.initialRouteArgs,
     ).reduce((result, [key, value]) => {
@@ -201,8 +242,8 @@ export class AppImpl implements App {
       const regex = new RegExp(`^${pluginId}:(.+)$`);
       const match = key.match(regex);
 
-      // Only include entries that match the regex and have the right value type
-      if (match && ['string', 'number', 'boolean'].includes(typeof value)) {
+      // Only include entries that match the regex
+      if (match) {
         const newKey = match[1];
         // Use the capture group (what comes after the prefix) as the new key
         result[newKey] = value;
@@ -278,12 +319,19 @@ export class AppImpl implements App {
     this.openTrace({type: 'FILE', file});
   }
 
+  openTraceFromMultipleFiles(files: ReadonlyArray<File>): void {
+    this.openTrace({type: 'MULTIPLE_FILES', files});
+  }
+
   openTraceFromUrl(url: string, serializedAppState?: SerializedAppState) {
     this.openTrace({type: 'URL', url, serializedAppState});
   }
 
-  openTraceFromBuffer(postMessageArgs: PostedTrace): void {
-    this.openTrace({type: 'ARRAY_BUFFER', ...postMessageArgs});
+  openTraceFromBuffer(
+    args: OpenTraceArrayBufArgs,
+    serializedAppState?: SerializedAppState,
+  ): void {
+    this.openTrace({...args, type: 'ARRAY_BUFFER', serializedAppState});
   }
 
   openTraceFromHttpRpc(): void {
@@ -303,9 +351,9 @@ export class AppImpl implements App {
         src.buffer.byteOffset === 0 &&
         src.buffer.byteLength === src.buffer.buffer.byteLength
       ) {
-        src.buffer = src.buffer.buffer;
+        src = {...src, buffer: src.buffer.buffer};
       } else {
-        src.buffer = src.buffer.slice().buffer;
+        src = {...src, buffer: src.buffer.slice().buffer};
       }
     }
 
@@ -316,6 +364,10 @@ export class AppImpl implements App {
     // complete trace loading (we don't bother supporting cancellations. If the
     // user is too bothered, they can reload the tab).
     this.appCtx.openTraceAsyncLimiter.schedule(async () => {
+      // Wait for extras parsing descriptors to be loaded
+      // via is_internal_user.js. This prevents a race condition where
+      // trace loading would otherwise begin before this data is available.
+      await this.extraLoadingPromise;
       this.appCtx.closeCurrentTrace();
       this.appCtx.isLoadingTrace = true;
       try {
@@ -365,6 +417,14 @@ export class AppImpl implements App {
     return this.appCtx.extraSqlPackages;
   }
 
+  get extraParsingDescriptors(): ReadonlyArray<string> {
+    return this.appCtx.extraParsingDescriptors;
+  }
+
+  get extraMacros(): Record<string, CommandInvocation[]>[] {
+    return this.appCtx.extraMacros;
+  }
+
   get perfDebugging(): PerfManager {
     return this.appCtx.perfMgr;
   }
@@ -382,5 +442,21 @@ export class AppImpl implements App {
 
   navigate(newHash: string): void {
     Router.navigate(newHash);
+  }
+
+  get isInternalUser() {
+    return this.appCtx.isInternalUser;
+  }
+
+  set isInternalUser(value: boolean) {
+    this.appCtx.isInternalUser = value;
+  }
+
+  notifyOnExtrasLoadingCompleted() {
+    this.appCtx.extrasLoadingDeferred.resolve();
+  }
+
+  get extraLoadingPromise(): Promise<undefined> {
+    return this.appCtx.extrasLoadingDeferred;
   }
 }

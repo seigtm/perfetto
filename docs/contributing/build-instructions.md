@@ -38,7 +38,7 @@ tools/install-build-deps [--android] [--ui] [--linux-arm]
 to build for `target_os = "android"`.
 
 `--ui` will pull NodeJS and all the NPM modules required to build the
-Web UI. See the [UI Development](#ui-development) section below for more.
+Web UI. See the [UI Development](/docs/contributing/ui-getting-started.md) section below for more.
 
 `--linux-arm` will pull the sysroots for cross-compiling for Linux ARM/64.
 
@@ -429,7 +429,7 @@ If you are using VS Code we suggest the following extensions:
 - [C/C++](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools)
 - [clangd](https://marketplace.visualstudio.com/items?itemName=llvm-vs-code-extensions.vscode-clangd)
 - [Native Debug](https://marketplace.visualstudio.com/items?itemName=webfreak.debug)
-- [GNFormat](https://marketplace.visualstudio.com/items?itemName=persidskiy.vscode-gnformat)
+- [GN Language Server](https://marketplace.visualstudio.com/items?itemName=msedge-dev.gnls)
 - [ESlint](https://marketplace.visualstudio.com/items?itemName=dbaeumer.vscode-eslint)
 - [markdownlint](https://marketplace.visualstudio.com/items?itemName=DavidAnson.vscode-markdownlint)
 - [Prettier](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode)

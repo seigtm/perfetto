@@ -3,7 +3,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
-# You may obtain a copy of the License a
+# You may obtain a copy of the License at
 #
 #      http://www.apache.org/licenses/LICENSE-2.0
 #
@@ -486,10 +486,8 @@ class PerfettoTable(TestSuite):
         trace=Path('../parser/android/surfaceflinger_layers.textproto'),
         query="""
         SELECT flat_key, key, int_value, string_value, real_value FROM __intrinsic_winscope_proto_to_args_with_defaults('surfaceflinger_layer') AS sfl
-        WHERE
-          (flat_key GLOB "*id" AND int_value = 3)
-          OR flat_key IN (
-            "id",
+        WHERE flat_key IN (
+            'id',
             "z",
             "parent",
             "name",
@@ -643,12 +641,12 @@ class PerfettoTable(TestSuite):
           "wm_abort_time_ns",0,"[NULL]"
           "create_time_ns",77854865352,"[NULL]"
           "dispatch_time_ns",77899001013,"[NULL]"
+          "finish_time_ns",78621610429,"[NULL]"
           "finish_transaction_id",5604932322159,"[NULL]"
           "flags",0,"[NULL]"
           "merge_request_time_ns",0,"[NULL]"
           "merge_target",0,"[NULL]"
           "merge_time_ns",0,"[NULL]"
-          "send_time_ns",77894307328,"[NULL]"
           "shell_abort_time_ns",0,"[NULL]"
           "start_transaction_id",5604932322158,"[NULL]"
           "starting_window_remove_time_ns",0,"[NULL]"
@@ -663,7 +661,7 @@ class PerfettoTable(TestSuite):
           "merge_target",0,"[NULL]"
           "merge_time_ns",0,"[NULL]"
           "send_time_ns",82535513345,"[NULL]"
-          "shell_abort_time_ns",0,"[NULL]"
+          "shell_abort_time_ns",82536817537,"[NULL]"
           "start_transaction_id",5604932322346,"[NULL]"
           "starting_window_remove_time_ns",0,"[NULL]"
           "targets[0].flags",0,"[NULL]"
@@ -696,6 +694,7 @@ class PerfettoTable(TestSuite):
           OR flat_key GLOB '*_name'
           OR flat_key GLOB '*view_id'
         ORDER BY base64_proto_id, key
+        LIMIT 8
         """,
         out=Csv("""
         "flat_key","key","int_value","string_value"
@@ -706,5 +705,27 @@ class PerfettoTable(TestSuite):
         "view_id_iid","view_id_iid",3,"[NULL]"
         "class_name","class_name","[NULL]","STRING DE-INTERNING ERROR"
         "class_name_iid","class_name_iid",3,"[NULL]"
-        "view_id","view_id","[NULL]","NO_ID"
+        "view_id","view_id","[NULL]","TEST_VIEW_ID"
         """))
+
+  def test_winscope_surfaceflinger_hierarchy_paths(self):
+    return DiffTestBlueprint(
+        trace=Path('../parser/android/surfaceflinger_layers.textproto'),
+        query="""
+          SELECT * FROM __intrinsic_winscope_surfaceflinger_hierarchy_path() as tbl
+          ORDER BY tbl.id
+          LIMIT 10
+          """,
+        out=Csv("""
+          "id","snapshot_id","layer_id","ancestor_id"
+          0,0,3,3
+          1,0,4,3
+          2,0,4,4
+          3,1,3,3
+          4,1,4,3
+          5,1,4,4
+          6,2,4294967294,4294967294
+          7,2,1,1
+          8,2,2,2
+          9,2,3,3
+          """))

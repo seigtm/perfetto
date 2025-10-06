@@ -19,6 +19,8 @@ assert(enable_perfetto_trace_processor_sqlite)
 
 source_set("functions") {
   sources = [
+    "args.cc",
+    "args.h",
     "base64.cc",
     "base64.h",
     "clock_functions.h",
@@ -81,6 +83,9 @@ source_set("functions") {
     "../../../storage",
     "../../../tables",
     "../../../types",
+    "../../../util:args_utils",
+    "../../../util:glob",
+    "../../../util:json_writer",
     "../../../util:profile_builder",
     "../../../util:regex",
     "../../../util:sql_argument",
@@ -90,6 +95,16 @@ source_set("functions") {
     "../types",
   ]
   public_deps = [ ":interface" ]
+  if (enable_perfetto_llvm_symbolizer) {
+    sources += [
+      "symbolize.cc",
+      "symbolize.h",
+    ]
+    deps += [
+      "../../../../profiling/symbolizer:llvm_symbolizer",
+      "../../../../profiling/symbolizer:llvm_symbolizer_c_api",
+    ]
+  }
 }
 
 source_set("interface") {

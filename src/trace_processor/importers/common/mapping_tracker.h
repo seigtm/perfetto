@@ -24,7 +24,6 @@
 #include <vector>
 
 #include "perfetto/ext/base/flat_hash_map.h"
-#include "perfetto/ext/base/hash.h"
 #include "perfetto/ext/base/string_view.h"
 #include "src/trace_processor/importers/common/address_range.h"
 #include "src/trace_processor/importers/common/virtual_memory_mapping.h"
@@ -87,7 +86,7 @@ class MappingTracker {
 
   std::vector<VirtualMemoryMapping*> FindMappings(
       base::StringView name,
-      const BuildId& build_id) const;
+      const std::optional<BuildId>& build_id) const;
 
   // Marks a range of memory as containing jitted code.
   // If the added region overlaps with other existing ranges the latter are all
@@ -120,7 +119,7 @@ class MappingTracker {
 
     struct Hasher {
       size_t operator()(const NameAndBuildId& o) const {
-        base::Hasher hasher;
+        base::FnvHasher hasher;
         hasher.Update(o.name);
         if (o.build_id) {
           hasher.Update(*o.build_id);

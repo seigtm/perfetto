@@ -18,11 +18,10 @@
 #define SRC_TRACE_PROCESSOR_PERFETTO_SQL_INTRINSICS_TYPES_COUNTER_H_
 
 #include <cstdint>
-#include <limits>
-#include <string>
 #include <vector>
+
 #include "perfetto/ext/base/flat_hash_map.h"
-#include "perfetto/trace_processor/basic_types.h"
+#include "perfetto/ext/base/hash.h"
 
 namespace perfetto::trace_processor::perfetto_sql {
 
@@ -30,6 +29,10 @@ struct CounterTrackPartition {
   std::vector<int64_t> id;
   std::vector<int64_t> ts;
   std::vector<double> val;
+
+  int64_t last_equal_id;
+  int64_t last_equal_ts;
+  double last_equal_val;
 };
 
 struct PartitionedCounter {

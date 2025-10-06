@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {DisposableStack} from '../base/disposable_stack';
 import {OmniboxManager, PromptChoices} from '../public/omnibox';
 import {raf} from './raf_scheduler';
 
@@ -37,8 +38,9 @@ export class OmniboxManagerImpl implements OmniboxManager {
   private _pendingPrompt?: Prompt;
   private _omniboxSelectionIndex = 0;
   private _forceShortTextSearch = false;
-  private _textForMode = new Map<OmniboxMode, string>();
+  private _text = '';
   private _statusMessageContainer: {msg?: string} = {};
+  private _promptsDisabled = false;
 
   get mode(): OmniboxMode {
     return this._mode;
@@ -49,7 +51,7 @@ export class OmniboxManagerImpl implements OmniboxManager {
   }
 
   get text(): string {
-    return this._textForMode.get(this._mode) ?? '';
+    return this._text;
   }
 
   get selectionIndex(): number {
@@ -69,7 +71,7 @@ export class OmniboxManagerImpl implements OmniboxManager {
   }
 
   setText(value: string): void {
-    this._textForMode.set(this._mode, value);
+    this._text = value;
   }
 
   setSelectionIndex(index: number): void {
@@ -90,6 +92,7 @@ export class OmniboxManagerImpl implements OmniboxManager {
     this._mode = mode;
     this._focusOmniboxNextRender = focus;
     this._omniboxSelectionIndex = 0;
+    this._text = '';
     this.rejectPendingPrompt();
   }
 
@@ -111,21 +114,32 @@ export class OmniboxManagerImpl implements OmniboxManager {
   // Start a prompt. If options are supplied, the user must pick one from the
   // list, otherwise the input is free-form text.
   prompt(text: string): Promise<string | undefined>;
+  prompt(text: string, defaultValue: string): Promise<string | undefined>;
   prompt(
     text: string,
-    options?: ReadonlyArray<string>,
+    choices: ReadonlyArray<string>,
   ): Promise<string | undefined>;
-  prompt<T>(text: string, options?: PromptChoices<T>): Promise<T | undefined>;
+  prompt<T>(text: string, choices: PromptChoices<T>): Promise<T | undefined>;
   prompt<T>(
     text: string,
-    choices?: ReadonlyArray<string> | PromptChoices<T>,
+    choicesOrDefaultValue?: ReadonlyArray<string> | PromptChoices<T> | string,
   ): Promise<string | T | undefined> {
+    if (this._promptsDisabled) {
+      return Promise.resolve(undefined);
+    }
+
     this._mode = OmniboxMode.Prompt;
     this._omniboxSelectionIndex = 0;
     this.rejectPendingPrompt();
     this._focusOmniboxNextRender = true;
 
-    if (choices && 'getName' in choices) {
+    // Handle PromptChoices<T> case
+    if (
+      choicesOrDefaultValue !== undefined &&
+      typeof choicesOrDefaultValue === 'object' &&
+      'getName' in choicesOrDefaultValue
+    ) {
+      const choices = choicesOrDefaultValue as PromptChoices<T>;
       return new Promise<T | undefined>((resolve) => {
         const choiceMap = new Map(
           choices.values.map((choice) => [choices.getName(choice), choice]),
@@ -141,10 +155,32 @@ export class OmniboxManagerImpl implements OmniboxManager {
       });
     }
 
+    // Handle ReadonlyArray<string> choices case
+    if (
+      choicesOrDefaultValue !== undefined &&
+      Array.isArray(choicesOrDefaultValue)
+    ) {
+      const choices = choicesOrDefaultValue as ReadonlyArray<string>;
+      return new Promise<string | undefined>((resolve) => {
+        this._pendingPrompt = {
+          text,
+          options: choices.map((value) => ({key: value, displayName: value})),
+          resolve,
+        };
+      });
+    }
+
+    // Handle free-form input (with or without default value)
+    const defaultValue =
+      typeof choicesOrDefaultValue === 'string'
+        ? choicesOrDefaultValue
+        : undefined;
     return new Promise<string | undefined>((resolve) => {
+      if (defaultValue !== undefined) {
+        this.setText(defaultValue);
+      }
       this._pendingPrompt = {
         text,
-        options: choices?.map((value) => ({key: value, displayName: value})),
         resolve,
       };
     });
@@ -171,6 +207,17 @@ export class OmniboxManagerImpl implements OmniboxManager {
     this.setMode(defaultMode, focus);
     this._omniboxSelectionIndex = 0;
     this._statusMessageContainer = {};
+  }
+
+  disablePrompts(): Disposable {
+    const trash = new DisposableStack();
+    if (this._promptsDisabled) {
+      return trash;
+    }
+    trash.defer(() => (this._promptsDisabled = false));
+    this._promptsDisabled = true;
+    this.rejectPendingPrompt();
+    return trash;
   }
 
   private rejectPendingPrompt() {

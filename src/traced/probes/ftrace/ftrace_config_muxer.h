@@ -27,8 +27,8 @@
 #include "src/traced/probes/ftrace/compact_sched.h"
 #include "src/traced/probes/ftrace/ftrace_config_utils.h"
 #include "src/traced/probes/ftrace/ftrace_print_filter.h"
-#include "src/traced/probes/ftrace/ftrace_procfs.h"
 #include "src/traced/probes/ftrace/proto_translation_table.h"
+#include "src/traced/probes/ftrace/tracefs.h"
 
 #include "protos/perfetto/trace/ftrace/generic.pbzero.h"
 
@@ -132,10 +132,10 @@ struct FtraceDataSourceConfig {
 // When you are finished with a config you can signal that with |RemoveConfig|.
 class FtraceConfigMuxer {
  public:
-  // The FtraceProcfs and ProtoTranslationTable
+  // The Tracefs and ProtoTranslationTable
   // should outlive this instance.
   FtraceConfigMuxer(
-      FtraceProcfs* ftrace,
+      Tracefs* ftrace,
       AtraceWrapper* atrace_wrapper,
       ProtoTranslationTable* table,
       SyscallTable syscalls,
@@ -147,13 +147,12 @@ class FtraceConfigMuxer {
   FtraceConfigMuxer(const FtraceConfigMuxer&) = delete;
   FtraceConfigMuxer& operator=(const FtraceConfigMuxer&) = delete;
 
-  // Ask FtraceConfigMuxer to adjust ftrace procfs settings to
-  // match the requested config. Returns true on success and false on failure.
-  // This is best effort. FtraceConfigMuxer may not be able to adjust the
-  // buffer size right now. Events may be missing or there may be extra events
-  // (if you enable an atrace category we try to give you the matching events).
-  // If someone else is tracing we won't touch atrace (since it resets the
-  // buffer).
+  // Ask FtraceConfigMuxer to adjust tracefs settings to match the requested
+  // config. Returns true on success and false on failure. This is best effort.
+  // FtraceConfigMuxer may not be able to adjust the buffer size right now.
+  // Events may be missing or there may be extra events (if you enable an atrace
+  // category we try to give you the matching events). If someone else is
+  // tracing we won't touch atrace (since it resets the buffer).
   bool SetupConfig(FtraceConfigId id,
                    const FtraceConfig& request,
                    FtraceSetupErrors* = nullptr);
@@ -200,6 +199,10 @@ class FtraceConfigMuxer {
     return current_state_.syscall_filter;
   }
 
+  bool GetExclusiveFeatureActiveForTesting() const {
+    return current_state_.exclusive_feature_active;
+  }
+
   size_t GetDataSourcesCount() const { return ds_configs_.size(); }
 
   // Returns the syscall ids for the current architecture
@@ -213,6 +216,8 @@ class FtraceConfigMuxer {
     EventFilter ftrace_events;
     std::set<size_t> syscall_filter;  // syscall ids or kAllSyscallsId
     bool funcgraph_on = false;        // current_tracer == "function_graph"
+    // Any exclusive single-tenant feature active.
+    bool exclusive_feature_active = false;
     size_t cpu_buffer_size_pages = 0;
     protos::pbzero::FtraceClock ftrace_clock{};
     // Used only in Android for ATRACE_EVENT/os.Trace() userspace:
@@ -228,6 +233,14 @@ class FtraceConfigMuxer {
     bool saved_tracing_on;  // Backup for the original tracing_on.
     // Set of kprobes that we've installed, to be cleaned up when tracing stops.
     base::FlatSet<GroupAndName> installed_kprobes;
+    // State of tracefs options before tracing started.
+    // Since there is no "default" value for tracefs options, we save the
+    // original values when tracing starts and restore them when tracing stops.
+    base::FlatHashMap<std::string, bool> saved_tracefs_options;
+    // The value of tracing_cpumask before tracing started.
+    // Since there is no "default" value for tracing_cpumask, we save the
+    // original value when tracing starts and restore it when tracing stops.
+    std::optional<std::string> saved_tracing_cpumask;
   };
 
   void SetupClock(const FtraceConfig& request);
@@ -272,7 +285,7 @@ class FtraceConfigMuxer {
   // so the filter can be updated before ds_configs_.
   bool SetSyscallEventFilter(const EventFilter& extra_syscalls);
 
-  FtraceProcfs* ftrace_;
+  Tracefs* ftrace_;
   AtraceWrapper* atrace_wrapper_;
   ProtoTranslationTable* table_;
   SyscallTable syscalls_;

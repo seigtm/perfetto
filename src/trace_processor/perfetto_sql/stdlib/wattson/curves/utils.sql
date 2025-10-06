@@ -13,9 +13,13 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 
-INCLUDE PERFETTO MODULE wattson.curves.device_cpu;
+INCLUDE PERFETTO MODULE wattson.curves.device_cpu_1d;
+
+INCLUDE PERFETTO MODULE wattson.curves.device_cpu_2d;
 
 INCLUDE PERFETTO MODULE wattson.curves.device_gpu;
+
+INCLUDE PERFETTO MODULE wattson.curves.device_l3;
 
 INCLUDE PERFETTO MODULE wattson.device_infos;
 
@@ -39,27 +43,23 @@ SELECT
   policy,
   freq_khz,
   -1 AS idle,
-  active AS curve_value
+  active AS curve_value,
+  static
 FROM _filtered_curves_1d_raw
 UNION
 SELECT
   policy,
   freq_khz,
   0,
-  idle0
+  idle0,
+  static
 FROM _filtered_curves_1d_raw
 UNION
 SELECT
   policy,
   freq_khz,
   1,
-  idle1
-FROM _filtered_curves_1d_raw
-UNION
-SELECT
-  policy,
-  freq_khz,
-  255,
+  idle1,
   static
 FROM _filtered_curves_1d_raw;
 
@@ -68,86 +68,61 @@ CREATE PERFETTO INDEX freq_1d ON _filtered_curves_1d(policy, freq_khz, idle);
 -- 2D LUT; with dependency on another CPU
 CREATE PERFETTO TABLE _filtered_curves_2d_raw AS
 SELECT
-  cp.policy AS other_policy,
+  dc.policy,
   dc.freq_khz,
-  dc.other_freq_khz,
+  dc.dep_policy,
+  dc.dep_freq,
   dc.active,
   dc.idle0,
   dc.idle1,
   dc.static
 FROM _device_curves_2d AS dc
 JOIN _wattson_device AS device
-  ON dc.device = device.name
-JOIN _dev_cpu_policy_map AS cp
-  ON dc.other_policy = cp.policy;
+  ON dc.device = device.name;
 
 CREATE PERFETTO TABLE _filtered_curves_2d AS
 SELECT
   freq_khz,
-  other_policy,
-  other_freq_khz,
+  dep_policy,
+  dep_freq,
   -1 AS idle,
+  static,
   active AS curve_value
 FROM _filtered_curves_2d_raw
 UNION
 SELECT
   freq_khz,
-  other_policy,
-  other_freq_khz,
+  dep_policy,
+  dep_freq,
   0,
+  static,
   idle0
 FROM _filtered_curves_2d_raw
 UNION
 SELECT
   freq_khz,
-  other_policy,
-  other_freq_khz,
+  dep_policy,
+  dep_freq,
   1,
+  static,
   idle1
-FROM _filtered_curves_2d_raw
-UNION
-SELECT
-  freq_khz,
-  other_policy,
-  other_freq_khz,
-  255,
-  static
 FROM _filtered_curves_2d_raw;
 
-CREATE PERFETTO INDEX freq_2d ON _filtered_curves_2d(freq_khz, other_policy, other_freq_khz, idle);
+CREATE PERFETTO INDEX freq_2d ON _filtered_curves_2d(freq_khz, dep_policy, dep_freq, idle);
 
 -- L3 cache LUT
-CREATE PERFETTO TABLE _filtered_curves_l3_raw AS
+CREATE PERFETTO TABLE _filtered_curves_l3 AS
 SELECT
-  cp.policy AS other_policy,
   dc.freq_khz,
-  dc.other_freq_khz,
+  dc.dep_policy,
+  dc.dep_freq,
   dc.l3_hit,
   dc.l3_miss
 FROM _device_curves_l3 AS dc
 JOIN _wattson_device AS device
-  ON dc.device = device.name
-JOIN _dev_cpu_policy_map AS cp
-  ON dc.other_policy = cp.policy;
+  ON dc.device = device.name;
 
-CREATE PERFETTO TABLE _filtered_curves_l3 AS
-SELECT
-  freq_khz,
-  other_policy,
-  other_freq_khz,
-  'hit' AS action,
-  l3_hit AS curve_value
-FROM _filtered_curves_l3_raw
-UNION
-SELECT
-  freq_khz,
-  other_policy,
-  other_freq_khz,
-  'miss' AS action,
-  l3_miss
-FROM _filtered_curves_l3_raw;
-
-CREATE PERFETTO INDEX freq_l3 ON _filtered_curves_l3(freq_khz, other_policy, other_freq_khz, action);
+CREATE PERFETTO INDEX freq_l3 ON _filtered_curves_l3(freq_khz, dep_policy, dep_freq);
 
 -- Device specific GPU curves
 CREATE PERFETTO TABLE _gpu_filtered_curves_raw AS
@@ -180,3 +155,80 @@ SELECT
 FROM _gpu_filtered_curves_raw;
 
 CREATE PERFETTO INDEX gpu_freq ON _gpu_filtered_curves(freq_khz, idle);
+
+-- Constructs table specifying CPUs that are DSU dependent
+CREATE PERFETTO TABLE _cpu_w_dsu_dependency AS
+SELECT DISTINCT
+  cpu
+FROM _filtered_curves_2d_raw
+JOIN _dev_cpu_policy_map
+  USING (policy)
+WHERE
+  dep_policy = 255;
+
+-- Chooses the minimum vote for CPUs with dependencies
+CREATE PERFETTO TABLE _cpu_w_dependency_default_vote AS
+WITH
+  policy_vote AS (
+    SELECT
+      policy,
+      dep_policy,
+      min(dep_freq) AS dep_freq
+    FROM _filtered_curves_2d_raw
+    GROUP BY
+      policy
+  )
+SELECT
+  cpu,
+  dep_policy,
+  dep_freq
+FROM policy_vote
+JOIN _dev_cpu_policy_map
+  USING (policy);
+
+-- CPUs that need to be checked for static calculation
+CREATE PERFETTO TABLE _cpus_for_static AS
+SELECT DISTINCT
+  m.cpu
+FROM _filtered_curves_2d_raw AS c
+JOIN _dev_cpu_policy_map AS m
+  USING (policy)
+WHERE
+  static > 0
+UNION
+SELECT DISTINCT
+  m.cpu
+FROM _filtered_curves_1d AS c
+JOIN _dev_cpu_policy_map AS m
+  USING (policy)
+WHERE
+  static > 0;
+
+-- Contructs table specifying CPU dependency of each CPU (if applicable)
+CREATE PERFETTO TABLE _cpu_lut_dependencies AS
+WITH
+  base_cpus AS (
+    SELECT DISTINCT
+      m.cpu,
+      m.policy
+    FROM _filtered_curves_2d_raw AS c
+    JOIN _dev_cpu_policy_map AS m
+      USING (policy)
+    WHERE
+      dep_policy != 255
+  ),
+  dep_cpus AS (
+    SELECT DISTINCT
+      m.cpu AS dep_cpu,
+      m.policy AS dep_policy
+    FROM _filtered_curves_2d_raw AS c
+    JOIN _dev_cpu_policy_map AS m
+      ON c.dep_policy = m.policy
+  )
+SELECT
+  b.cpu,
+  d.dep_cpu
+FROM base_cpus AS b
+CROSS JOIN dep_cpus AS d
+WHERE
+  b.policy != d.dep_policy;

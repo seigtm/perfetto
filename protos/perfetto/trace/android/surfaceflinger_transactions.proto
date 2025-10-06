@@ -95,6 +95,11 @@ message Transform {
   optional float ty = 6;
 }
 
+message TransactionBarrier {
+  optional string barrier_token = 1;
+  optional uint32 kind = 2;
+}
+
 message TransactionState {
   optional int32 pid = 1;
   optional int32 uid = 2;
@@ -106,6 +111,7 @@ message TransactionState {
   repeated DisplayState display_changes = 8;
   repeated uint64 merged_transaction_ids = 9;
   optional uint64 apply_token = 10;
+  repeated TransactionBarrier transaction_barriers = 11;
 }
 
 // Keep insync with layer_state_t
@@ -173,6 +179,9 @@ message LayerState {
     eTrustedOverlayChanged = 0x4000;
     eDropInputModeChanged = 0x8000;
     eClientDrawnCornerRadiusChanged = 0x00010000;
+    eSystemContentPriorityChanged = 0x00020000;
+    eBoxShadowSettingsChanged = 0x00040000;
+    eBorderSettingsChanged = 0x00080000;
   };
   optional uint64 what = 2;
   optional float x = 3;
@@ -313,6 +322,12 @@ message LayerState {
   optional CornerRadii corner_radii = 45;
 
   optional CornerRadii client_drawn_corner_radii = 46;
+
+  optional int32 system_content_priority = 47;
+
+  optional BoxShadowSettings box_shadow_settings = 48;
+
+  optional BorderSettings border_settings = 49;
 }
 
 message DisplayState {

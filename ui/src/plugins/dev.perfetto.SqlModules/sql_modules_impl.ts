@@ -29,12 +29,13 @@ import {
 } from './sql_modules';
 import {SqlTableDescription} from '../../components/widgets/sql/table/table_description';
 import {TableColumn} from '../../components/widgets/sql/table/table_column';
+import {Trace} from '../../public/trace';
 
 export class SqlModulesImpl implements SqlModules {
   readonly packages: SqlPackage[];
 
-  constructor(docs: SqlModulesDocsSchema) {
-    this.packages = docs.map((json) => new StdlibPackageImpl(json));
+  constructor(trace: Trace, docs: SqlModulesDocsSchema) {
+    this.packages = docs.map((json) => new StdlibPackageImpl(trace, json));
   }
 
   findAllTablesWithLinkedId(tableAndColumn: TableAndColumn): SqlTable[] {
@@ -81,25 +82,29 @@ export class SqlModulesImpl implements SqlModules {
     }
     return undefined;
   }
+
+  listModules(): SqlModule[] {
+    return this.packages.flatMap((p) => p.modules);
+  }
 }
 
 export class StdlibPackageImpl implements SqlPackage {
   readonly name: string;
   readonly modules: SqlModule[];
 
-  constructor(docs: DocsPackageSchemaType) {
+  constructor(trace: Trace, docs: DocsPackageSchemaType) {
     this.name = docs.name;
     this.modules = [];
     for (const moduleJson of docs.modules) {
-      this.modules.push(new StdlibModuleImpl(moduleJson));
+      this.modules.push(new StdlibModuleImpl(trace, moduleJson));
     }
   }
 
   getTable(tableName: string): SqlTable | undefined {
     for (const module of this.modules) {
-      for (const dataObj of module.dataObjects) {
-        if (dataObj.name == tableName) {
-          return dataObj;
+      for (const t of module.tables) {
+        if (t.name == tableName) {
+          return t;
         }
       }
     }
@@ -107,7 +112,7 @@ export class StdlibPackageImpl implements SqlPackage {
   }
 
   listTables(): SqlTable[] {
-    return this.modules.flatMap((module) => module.dataObjects);
+    return this.modules.flatMap((module) => module.tables);
   }
 
   listTablesNames(): string[] {
@@ -116,8 +121,8 @@ export class StdlibPackageImpl implements SqlPackage {
 
   getModuleForTable(tableName: string): SqlModule | undefined {
     for (const module of this.modules) {
-      for (const dataObj of module.dataObjects) {
-        if (dataObj.name == tableName) {
+      for (const t of module.tables) {
+        if (t.name == tableName) {
           return module;
         }
       }
@@ -127,8 +132,8 @@ export class StdlibPackageImpl implements SqlPackage {
 
   getSqlTableDescription(tableName: string): SqlTableDescription | undefined {
     for (const module of this.modules) {
-      for (const dataObj of module.dataObjects) {
-        if (dataObj.name == tableName) {
+      for (const t of module.tables) {
+        if (t.name == tableName) {
           return module.getSqlTableDescription(tableName);
         }
       }
@@ -139,19 +144,19 @@ export class StdlibPackageImpl implements SqlPackage {
 
 export class StdlibModuleImpl implements SqlModule {
   readonly includeKey: string;
-  readonly dataObjects: SqlTable[];
+  readonly tables: SqlTable[];
   readonly functions: SqlFunction[];
   readonly tableFunctions: SqlTableFunction[];
   readonly macros: SqlMacro[];
 
-  constructor(docs: DocsModuleSchemaType) {
+  constructor(trace: Trace, docs: DocsModuleSchemaType) {
     this.includeKey = docs.module_name;
 
     const neededInclude = this.includeKey.startsWith('prelude')
       ? undefined
       : this.includeKey;
-    this.dataObjects = docs.data_objects.map(
-      (json) => new SqlTableImpl(json, neededInclude),
+    this.tables = docs.data_objects.map(
+      (json) => new SqlTableImpl(trace, json, neededInclude),
     );
 
     this.functions = docs.functions.map((json) => new StdlibFunctionImpl(json));
@@ -162,9 +167,9 @@ export class StdlibModuleImpl implements SqlModule {
   }
 
   getTable(tableName: string): SqlTable | undefined {
-    for (const obj of this.dataObjects) {
-      if (obj.name == tableName) {
-        return obj;
+    for (const t of this.tables) {
+      if (t.name == tableName) {
+        return t;
       }
     }
     return undefined;
@@ -244,7 +249,11 @@ class SqlTableImpl implements SqlTable {
   linkedIdColumns: SqlColumn[];
   joinIdColumns: SqlColumn[];
 
-  constructor(docs: DocsDataObjectSchemaType, includeKey: string | undefined) {
+  constructor(
+    readonly trace: Trace,
+    docs: DocsDataObjectSchemaType,
+    includeKey: string | undefined,
+  ) {
     this.name = docs.name;
     this.includeKey = includeKey;
     this.description = docs.desc;
@@ -291,7 +300,7 @@ class SqlTableImpl implements SqlTable {
 
   getTableColumns(): TableColumn[] {
     return this.columns.map((col) =>
-      createTableColumnFromPerfettoSql(col, this.name),
+      createTableColumnFromPerfettoSql(this.trace, col, this.name),
     );
   }
 }

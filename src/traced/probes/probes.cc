@@ -22,13 +22,13 @@
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/getopt.h"
-#include "perfetto/ext/base/unix_task_runner.h"
+#include "perfetto/ext/base/lock_free_task_runner.h"
 #include "perfetto/ext/base/utils.h"
 #include "perfetto/ext/base/version.h"
 #include "perfetto/ext/traced/traced.h"
 #include "perfetto/tracing/default_socket.h"
 
-#include "src/traced/probes/ftrace/ftrace_procfs.h"
+#include "src/traced/probes/ftrace/tracefs.h"
 #include "src/traced/probes/probes_producer.h"
 
 namespace perfetto {
@@ -107,14 +107,14 @@ int PERFETTO_EXPORT_ENTRYPOINT ProbesMain(int argc, char** argv) {
   // due to permissions.
   const char* env = getenv("ANDROID_FILE__dev_kmsg");
   if (env) {
-    FtraceProcfs::g_kmesg_fd = atoi(env);
+    Tracefs::g_kmesg_fd = atoi(env);
     // The file descriptor passed by init doesn't have the FD_CLOEXEC bit set.
     // Set it so we don't leak this fd while invoking atrace.
-    int res = fcntl(FtraceProcfs::g_kmesg_fd, F_SETFD, FD_CLOEXEC);
+    int res = fcntl(Tracefs::g_kmesg_fd, F_SETFD, FD_CLOEXEC);
     PERFETTO_DCHECK(res == 0);
   }
 
-  base::UnixTaskRunner task_runner;
+  base::MaybeLockFreeTaskRunner task_runner;
   ProbesProducer producer;
   // If the TRACED_PROBES_NOTIFY_FD env var is set, write 1 and close the FD,
   // when all data sources have been registered. This is used for //src/tracebox

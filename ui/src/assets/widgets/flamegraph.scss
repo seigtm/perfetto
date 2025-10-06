@@ -55,20 +55,19 @@
     overflow-y: auto;
   }
 
-  .virtual-canvas {
+  .pf-virtual-canvas {
     height: 100%;
   }
 }
 
 .pf-flamegraph-filter-bar-popup-content {
   white-space: pre-line;
-  width: max-content;
-  font-family: "Roboto Condensed", sans-serif;
+  width: 100%;
+  word-wrap: break-word;
 }
 
 .pf-flamegraph-tooltip-popup {
   width: max-content;
-  font-family: "Roboto Condensed", sans-serif;
   font-size: 15px;
   display: flex;
   flex-direction: column;
@@ -92,5 +91,12 @@
 
   .pf-button-bar {
     padding-top: 16px;
+  }
+
+  .tooltip-marker-text {
+    font-size: 12px;
+    font-style: italic;
+    color: var(--pf-color-text-muted);
+    padding-bottom: 4px; // Extra gap between marker and function name
   }
 }

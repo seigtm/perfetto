@@ -32,6 +32,7 @@ enum TraceType {
   kJsonTraceType,
   kNinjaLogTraceType,
   kPerfDataTraceType,
+  kPprofTraceType,
   kProtoTraceType,
   kSymbolsTraceType,
   kSystraceTraceType,
@@ -45,7 +46,7 @@ enum TraceType {
   kTarTraceType,
 };
 
-constexpr size_t kGuessTraceMaxLookahead = 64;
+constexpr size_t kGuessTraceMaxLookahead = 128;
 TraceType GuessTraceType(const uint8_t* data, size_t size);
 const char* TraceTypeToString(TraceType type);
 

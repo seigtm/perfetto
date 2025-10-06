@@ -14,15 +14,7 @@
 -- limitations under the License.
 
 INCLUDE PERFETTO MODULE android.frames.jank_type;
-
-DROP TABLE IF EXISTS vsync_missed_callback;
-CREATE PERFETTO TABLE vsync_missed_callback AS
-SELECT CAST(STR_SPLIT(name, 'Callback#', 1) AS INTEGER) AS vsync,
-       MAX(name GLOB '*SF*') as sf_callback_missed,
-       MAX(name GLOB '*HWUI*') as hwui_callback_missed
-FROM slice
-WHERE name GLOB '*FT#Missed*Callback*'
-GROUP BY vsync;
+INCLUDE PERFETTO MODULE android.frames.timeline;
 
 DROP TABLE IF EXISTS android_jank_cuj_frame_timeline;
 CREATE PERFETTO TABLE android_jank_cuj_frame_timeline AS
@@ -60,7 +52,7 @@ JOIN actual_timeline_with_vsync timeline
      AND vsync <= vsync_max
 LEFT JOIN expected_frame_timeline_slice expected
   ON expected.upid = timeline.upid AND expected.name = timeline.name
-LEFT JOIN vsync_missed_callback missed_callback USING(vsync)
+LEFT JOIN _vsync_missed_callback missed_callback USING(vsync)
 WHERE
   boundary.layer_id IS NULL
   OR (
@@ -95,7 +87,7 @@ WITH frame_base AS (
     boundary.ts_do_frame_start,
     COUNT(fence_idx) AS gpu_fence_count,
     COUNT(fence_idx) > 0 AS drew_anything
-  FROM android_jank_cuj_do_frame_slice do_frame
+  FROM _android_jank_cuj_do_frames do_frame
   JOIN android_jank_cuj_main_thread_frame_boundary boundary USING (cuj_id, vsync)
   JOIN android_jank_cuj_draw_frame_slice draw_frame USING (cuj_id, vsync)
   LEFT JOIN android_jank_cuj_gpu_completion_fence fence USING (cuj_id, vsync)

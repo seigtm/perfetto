@@ -23,7 +23,7 @@
 #include <string_view>
 #include <tuple>
 
-#include "perfetto/ext/base/hash.h"
+#include "perfetto/ext/base/fnv_hash.h"
 #include "src/trace_processor/containers/string_pool.h"
 
 namespace perfetto::trace_processor::tracks {
@@ -63,24 +63,47 @@ struct NameBlueprintT {
 struct BlueprintBase {
   std::string_view event_type;
   std::string_view type;
-  base::Hasher hasher;
+  base::FnvHasher hasher;
   std::array<DimensionBlueprintBase, 8> dimension_blueprints;
 };
 
-template <typename NB, typename UB, typename... DB>
+template <typename NB, typename UB, typename DeB, typename... DB>
 struct BlueprintT : BlueprintBase {
   using name_blueprint_t = NB;
   using unit_blueprint_t = UB;
+  using description_blueprint_t = DeB;
   using name_t = typename NB::name_t;
   using unit_t = typename UB::unit_t;
+  using description_t = typename DeB::description_t;
   using dimension_blueprints_t = std::tuple<DB...>;
   using dimensions_t = DimensionsT<typename DB::type...>;
   name_blueprint_t name_blueprint;
   unit_blueprint_t unit_blueprint;
+  description_blueprint_t description_blueprint;
 };
 
 template <typename... T>
 using DimensionBlueprintsT = std::tuple<T...>;
+
+struct DescriptionBlueprintT {
+  struct None {
+    using description_t = std::nullptr_t;
+  };
+  struct Static {
+    using description_t = std::nullptr_t;
+    const char* description;
+  };
+  struct Dynamic {
+    using description_t = StringPool::Id;
+  };
+  struct FnBase {
+    using description_t = std::nullptr_t;
+  };
+  template <typename F>
+  struct Fn : FnBase {
+    F fn;
+  };
+};
 
 struct UnitBlueprintT {
   struct Unknown {
@@ -98,7 +121,7 @@ struct UnitBlueprintT {
 template <typename BlueprintT, typename Dims>
 constexpr uint64_t HashFromBlueprintAndDimensions(const BlueprintT& bp,
                                                   const Dims& dims) {
-  base::Hasher hasher(bp.hasher);
+  base::FnvHasher hasher(bp.hasher);
   std::apply([&](auto&&... args) { ((hasher.Update(args)), ...); }, dims);
   return hasher.digest();
 }

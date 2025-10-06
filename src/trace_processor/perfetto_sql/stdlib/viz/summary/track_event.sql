@@ -119,6 +119,7 @@ SELECT
   min(extract_arg(track.source_arg_set_id, 'description')) AS description,
   min(counter_track.unit) AS unit,
   min(extract_arg(track.source_arg_set_id, 'builtin_counter_type')) AS builtin_counter_type,
+  min(extract_arg(track.source_arg_set_id, 'y_axis_share_key')) AS y_axis_share_key,
   max(m.id IS NOT NULL) AS has_data,
   max(c.id IS NOT NULL) AS has_children,
   GROUP_CONCAT(unioned.id) AS track_ids,
@@ -133,12 +134,8 @@ LEFT JOIN _track_event_has_children AS c
 LEFT JOIN _min_ts_per_track AS m
   USING (id)
 GROUP BY
-  -- Merge by parent id if it exists or, if not, then by upid/utid scope.
-  coalesce('Tp' || track.parent_id, 'Pr' || upid, 'Th' || utid),
-  is_counter,
-  track.name,
-  -- Don't merge tracks by name which have children or are counters.
-  iif(NOT c.id IS NULL OR is_counter, track.id, NULL)
+  track.track_group_id,
+  coalesce(track.track_group_id, track.id)
 ORDER BY
   track.parent_id,
   unioned.order_id;

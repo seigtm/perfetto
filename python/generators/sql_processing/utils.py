@@ -51,7 +51,7 @@ COLUMN_TYPES = [
     'ARGSETID'
 ]
 
-MACRO_ARG_TYPES = ['TABLEORSUBQUERY', 'EXPR', 'COLUMNNAME']
+MACRO_ARG_TYPES = ['TABLEORSUBQUERY', 'EXPR', 'COLUMNNAME', 'COLUMNNAMELIST']
 
 NAME = r'[a-zA-Z_\d\{\}]+'
 ANY_WORDS = r'[^\s].*'
@@ -186,8 +186,8 @@ def check_banned_words(sql: str) -> List[str]:
       continue
 
     if 'like' in line.casefold():
-      errors.append(
-          'LIKE is banned in trace processor metrics. Prefer GLOB instead.\n')
+      errors.append('LIKE is banned in trace processor metrics and stdlib. '
+                    'Prefer GLOB instead.\n')
       continue
 
     if 'create_function' in line.casefold():

@@ -36,7 +36,7 @@ export default class implements PerfettoPlugin {
           group_concat(distinct t.id) as trackIds,
           count() as trackCount
         from track t
-        where t.name = "Suspend/Resume Latency"
+        where t.type = 'suspend_resume'
       )
       select
         t.trackIds as trackIds,
@@ -66,7 +66,7 @@ export default class implements PerfettoPlugin {
       uri,
       tags: {
         trackIds,
-        kind: SLICE_TRACK_KIND,
+        kinds: [SLICE_TRACK_KIND],
       },
       renderer: await createTraceProcessorSliceTrack({
         trace: ctx,

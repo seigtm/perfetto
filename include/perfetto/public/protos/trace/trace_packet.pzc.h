@@ -44,11 +44,13 @@ PERFETTO_PB_MSG_DECL(perfetto_protos_CpuPerUidData);
 PERFETTO_PB_MSG_DECL(perfetto_protos_DeobfuscationMapping);
 PERFETTO_PB_MSG_DECL(perfetto_protos_EntityStateResidency);
 PERFETTO_PB_MSG_DECL(perfetto_protos_EtwTraceEventBundle);
+PERFETTO_PB_MSG_DECL(perfetto_protos_EvdevEvent);
 PERFETTO_PB_MSG_DECL(perfetto_protos_ExtensionDescriptor);
 PERFETTO_PB_MSG_DECL(perfetto_protos_FrameTimelineEvent);
 PERFETTO_PB_MSG_DECL(perfetto_protos_FtraceEventBundle);
 PERFETTO_PB_MSG_DECL(perfetto_protos_FtraceStats);
 PERFETTO_PB_MSG_DECL(perfetto_protos_GenericKernelCpuFrequencyEvent);
+PERFETTO_PB_MSG_DECL(perfetto_protos_GenericKernelProcessTree);
 PERFETTO_PB_MSG_DECL(perfetto_protos_GenericKernelTaskRenameEvent);
 PERFETTO_PB_MSG_DECL(perfetto_protos_GenericKernelTaskStateEvent);
 PERFETTO_PB_MSG_DECL(perfetto_protos_GpuCounterEvent);
@@ -549,9 +551,19 @@ PERFETTO_PB_FIELD(perfetto_protos_TracePacket,
                   120);
 PERFETTO_PB_FIELD(perfetto_protos_TracePacket,
                   MSG,
+                  perfetto_protos_GenericKernelProcessTree,
+                  generic_kernel_process_tree,
+                  122);
+PERFETTO_PB_FIELD(perfetto_protos_TracePacket,
+                  MSG,
                   perfetto_protos_CpuPerUidData,
                   cpu_per_uid_data,
                   119);
+PERFETTO_PB_FIELD(perfetto_protos_TracePacket,
+                  MSG,
+                  perfetto_protos_EvdevEvent,
+                  evdev_event,
+                  121);
 PERFETTO_PB_FIELD(perfetto_protos_TracePacket,
                   MSG,
                   perfetto_protos_TestEvent,

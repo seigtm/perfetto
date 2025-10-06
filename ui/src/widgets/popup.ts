@@ -13,15 +13,13 @@
 // limitations under the License.
 
 import {createPopper, Instance, OptionsGeneric} from '@popperjs/core';
-import type {Modifier, StrictModifiers} from '@popperjs/core';
+import type {Modifier} from '@popperjs/core';
 import m from 'mithril';
 import {MountOptions, Portal, PortalAttrs} from './portal';
 import {classNames} from '../base/classnames';
 import {findRef, isOrContains, toHTMLElement} from '../base/dom_utils';
 import {assertExists} from '../base/logging';
-
-type CustomModifier = Modifier<'sameWidth', {}>;
-type ExtendedModifiers = StrictModifiers | CustomModifier;
+import {ExtendedModifiers} from './popper_utils';
 
 // Note: We could just use the Placement type from popper.js instead, which is a
 // union of string literals corresponding to the values in this enum, but having
@@ -132,6 +130,7 @@ export class Popup implements m.ClassComponent<PopupAttrs> {
       closeOnOutsideClick = true,
     } = attrs;
 
+    this.isOpen = isOpen;
     this.onChange = onChange;
     this.closeOnEscape = closeOnEscape;
     this.closeOnOutsideClick = closeOnOutsideClick;
@@ -174,13 +173,24 @@ export class Popup implements m.ClassComponent<PopupAttrs> {
     const portalAttrs: PortalAttrs = {
       className: 'pf-popup-portal',
       onBeforeContentMount: (dom: Element): MountOptions => {
-        // Check to see if dom is a descendant of a popup
+        // Check to see if dom is a descendant of a popup or modal
         // If so, get the popup's "container" and put it in there instead
         // This handles the case where popups are placed inside the other popups
         // we nest outselves in their containers instead of document body which
         // means we become part of their hitbox for mouse events.
         const closestPopup = dom.closest(`[ref=${Popup.POPUP_REF}]`);
-        return {container: closestPopup ?? undefined};
+        if (closestPopup) {
+          return {container: closestPopup};
+        }
+        const closestModal = dom.closest('.pf-modal-dialog');
+        if (closestModal) {
+          return {container: closestModal};
+        }
+        const closestContainer = dom.closest('.pf-overlay-container');
+        if (closestContainer) {
+          return {container: closestContainer};
+        }
+        return {container: undefined};
       },
       onContentMount: (dom: HTMLElement) => {
         const popupElement = toHTMLElement(
@@ -275,6 +285,48 @@ export class Popup implements m.ClassComponent<PopupAttrs> {
       matchWidthModifier = [];
     }
 
+    // Custom modifier to hide popup when trigger is not visible. This can be
+    // due to the trigger or one of its ancestors having display:none.
+    const hideOnInvisible: Modifier<'hideOnInvisible', {}> = {
+      name: 'hideOnInvisible',
+      enabled: true,
+      phase: 'main',
+      fn({state}) {
+        const reference = state.elements.reference;
+        if (!(reference instanceof HTMLElement)) {
+          return;
+        }
+
+        // Check if checkVisibility is supported
+        if (typeof reference.checkVisibility === 'function') {
+          const isVisible = reference.checkVisibility();
+
+          if (!isVisible) {
+            // Hide the popper by setting display to none
+            state.elements.popper.style.display = 'none';
+          } else {
+            // Show the popper
+            state.elements.popper.style.display = '';
+          }
+        } else {
+          // Fallback for browsers that don't support checkVisibility()
+          // Use intersection observer or other visibility checks
+          const rect = reference.getBoundingClientRect();
+          const isVisible =
+            rect.top >= 0 &&
+            rect.left >= 0 &&
+            rect.bottom <=
+              (window.innerHeight || document.documentElement.clientHeight) &&
+            rect.right <=
+              (window.innerWidth || document.documentElement.clientWidth) &&
+            window.getComputedStyle(reference).visibility !== 'hidden' &&
+            window.getComputedStyle(reference).display !== 'none';
+
+          state.elements.popper.style.display = isVisible ? '' : 'none';
+        }
+      },
+    };
+
     const options: Partial<OptionsGeneric<ExtendedModifiers>> = {
       placement: position,
       modifiers: [
@@ -298,6 +350,7 @@ export class Popup implements m.ClassComponent<PopupAttrs> {
         // Don't let the arrow reach the end of the popup, which looks odd when
         // the popup has rounded corners
         {name: 'arrow', options: {padding: 2}},
+        hideOnInvisible,
         ...matchWidthModifier,
       ],
     };

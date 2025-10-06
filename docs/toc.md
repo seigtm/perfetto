@@ -73,11 +73,13 @@
     - [Opening large traces](visualization/large-traces.md)
     - [Deep linking](visualization/deep-linking-to-perfetto-ui.md)
     - [Debug tracks](analysis/debug-tracks.md)
+    - [UI Automation](visualization/ui-automation.md)
 
   - [Contributing](#)
 
     - [Getting started](contributing/getting-started.md)
     - [Common tasks](contributing/common-tasks.md)
+    - [Become a committer](contributing/become-a-committer.md)
     - [UI](#)
 
       - [Getting started](contributing/ui-getting-started.md)
@@ -123,16 +125,19 @@
     - [Android](#)
 
       - [Boot Tracing](case-studies/android-boot-tracing.md)
+      - [OutOfMemoryError](case-studies/android-outofmemoryerror.md)
       - [Android Version Notes](reference/android-version-notes.md)
 
     - [Linux](#)
 
+      - [Kernel track events](reference/kernel-track-event.md)
       - [Tracing across reboots](data-sources/previous-boot-trace.md)
 
     - [Command Line Reference](#)
 
       - [perfetto cmdline](reference/perfetto-cli.md)
       - [heap_profile cmdline](reference/heap_profile-cli.md)
+      - [tracebox](reference/tracebox.md)
 
   - [Advanced Trace Analysis](#)
 
@@ -156,6 +161,10 @@
 
     - [Interceptors](instrumentation/interceptors.md)
 
+  - [Advanced Trace Visualization](#)
+
+    - [Commands Automation Reference](visualization/commands-automation-reference.md)
+
   - [Contributor Reference](#)
 
     - [Building](contributing/build-instructions.md)
@@ -165,8 +174,10 @@
   - [Team documentation](#)
 
     - [SDK release process](contributing/sdk-releasing.md)
+    - [Python release process](contributing/python-releasing.md)
     - [UI release process](visualization/perfetto-ui-release-process.md)
     - [Chrome branches](contributing/chrome-branches.md)
+    - [SQLite upgrade guide](contributing/sqlite-upgrade-guide.md)
 
     - [Design documents](#)
       - [API and ABI surface](design-docs/api-and-abi.md)
@@ -175,7 +186,10 @@
       - [Security model](design-docs/security-model.md)
       - [Statsd Checkpoint Atoms](design-docs/checkpoint-atoms.md)
       - [Batch Trace Processor](design-docs/batch-trace-processor.md)
+      - [Trace Processor Architecture](design-docs/trace-processor-architecture.md)
       - [Heapprofd design](design-docs/heapprofd-design.md)
       - [Heapprofd wire protocol](design-docs/heapprofd-wire-protocol.md)
       - [Heapprofd sampling](design-docs/heapprofd-sampling.md)
       - [Perfetto CI](design-docs/continuous-integration.md)
+      - [LockFreeTaskRunner](design-docs/lock-free-task-runner.md)
+

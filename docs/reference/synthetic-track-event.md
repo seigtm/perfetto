@@ -76,7 +76,7 @@ Copy the following Python code into the `populate_packets(builder)` function in
 your `trace_converter_template.py` script.
 
 <details>
-<summary><a style="cursor: pointer;"><b>Click to expand/collapse Python code</b></a></summary>
+<summary><b>Click to expand/collapse Python code</b></summary>
 
 ```python
     TRUSTED_PACKET_SEQUENCE_ID = 8008
@@ -129,6 +129,15 @@ your `trace_converter_template.py` script.
 </details>
 
 ![Associating Tracks with Processes](/docs/images/synthetic-track-event-process-counter.png)
+
+You can query process-associated counter data using SQL in the Perfetto UI's Query tab or with [Trace Processor](/docs/analysis/getting-started.md):
+```sql
+SELECT counter.ts, counter.value, process.name AS process_name 
+FROM counter 
+JOIN process_counter_track ON counter.track_id = process_counter_track.id
+JOIN process USING(upid)
+WHERE process.pid = 1234;
+```
 
 Once you have defined a process track, you can parent various other kinds of
 tracks to it. This includes tracks for specific threads within that process (see
@@ -186,7 +195,7 @@ Copy the following Python code into the `populate_packets(builder)` function in
 your `trace_converter_template.py` script.
 
 <details>
-<summary><a style="cursor: pointer;"><b>Click to expand/collapse Python code</b></a></summary>
+<summary><b>Click to expand/collapse Python code</b></summary>
 
 ```python
     TRUSTED_PACKET_SEQUENCE_ID = 8009
@@ -255,6 +264,15 @@ your `trace_converter_template.py` script.
 
 ![Associating Tracks with Threads](/docs/images/synthetic-track-event-thread-slice.png)
 
+You can query thread-specific slices using SQL in the Perfetto UI's Query tab or with [Trace Processor](/docs/analysis/getting-started.md):
+```sql
+INCLUDE PERFETTO MODULE slices.with_context;
+
+SELECT ts, dur, name, thread_name
+FROM thread_slice 
+WHERE tid = 5678;
+```
+
 ## Advanced Track Customization
 
 Beyond associating tracks with OS concepts, Perfetto offers ways to fine-tune
@@ -299,7 +317,7 @@ Copy the following Python code into the `populate_packets(builder)` function in
 your `trace_converter_template.py` script.
 
 <details>
-<summary><a style="cursor: pointer;"><b>Click to expand/collapse Python code</b></a></summary>
+<summary><b>Click to expand/collapse Python code</b></summary>
 
 ```python
     TRUSTED_PACKET_SEQUENCE_ID = 9000
@@ -388,6 +406,143 @@ your `trace_converter_template.py` script.
 
 ![Controlling Track Sorting Order](/docs/images/synthetic-track-event-sorting.png)
 
+### Sharing Y-Axis Between Counters
+
+When visualizing multiple counter tracks, it is often useful to have them share
+the same Y-axis range. This allows for easy comparison of their values. Perfetto
+supports this feature through the `y_axis_share_key` field in the
+`CounterDescriptor`.
+
+All counter tracks that have the same `y_axis_share_key` and the same parent
+track will share their Y-axis range in the UI.
+
+**Python Example: Sharing Y-Axis**
+
+In this example, we create two counter tracks with the same `y_axis_share_key`.
+This will cause them to be rendered with the same Y-axis range in the Perfetto
+UI.
+
+<details>
+<summary><b>Click to expand/collapse Python code</b></summary>
+
+```python
+    TRUSTED_PACKET_SEQUENCE_ID = 9005
+
+    # --- Define Track UUIDs ---
+    counter1_uuid = 1
+    counter2_uuid = 2
+
+    # Helper to define a Counter TrackDescriptor
+    def define_counter_track(track_uuid, name, share_key=None):
+        packet = builder.add_packet()
+        desc = packet.track_descriptor
+        desc.uuid = track_uuid
+        desc.name = name
+        if share_key:
+            desc.counter.y_axis_share_key = share_key
+
+    # 1. Define the counter tracks with the same share key
+    define_counter_track(counter1_uuid, "Counter 1", "group1")
+    define_counter_track(counter2_uuid, "Counter 2", "group1")
+
+    # Helper to add a counter event
+    def add_counter_event(ts, value, counter_track_uuid):
+        packet = builder.add_packet()
+        packet.timestamp = ts
+        packet.track_event.type = TrackEvent.TYPE_COUNTER
+        packet.track_event.track_uuid = counter_track_uuid
+        packet.track_event.counter_value = value
+        packet.trusted_packet_sequence_id = TRUSTED_PACKET_SEQUENCE_ID
+
+    # 2. Add events to the tracks
+    add_counter_event(ts=1000, value=100, counter_track_uuid=counter1_uuid)
+    add_counter_event(ts=2000, value=200, counter_track_uuid=counter1_uuid)
+
+    add_counter_event(ts=1000, value=300, counter_track_uuid=counter2_uuid)
+    add_counter_event(ts=2000, value=400, counter_track_uuid=counter2_uuid)
+```
+
+</details>
+
+![Sharing Y-Axis](/docs/images/synthetic-track-event-share-y-axis.png)
+
+### Adding a Track Description
+
+You can add a human-readable description to any track to provide more context
+about the data it contains. In the Perfetto UI, this description appears in a
+popup when the user clicks the help icon next to the track's name. This is
+useful for explaining what a track represents, the meaning of its events, or how
+it should be interpreted, especially in complex custom traces.
+
+To add a description, you simply set the optional `description` field in the
+track's `TrackDescriptor`.
+
+#### Python Example
+
+This example defines two tracks: one with a `description` field set and one
+without, to illustrate the difference in the UI.
+
+Copy the following Python code into the `populate_packets(builder)` function in
+your `trace_converter_template.py` script.
+
+<details>
+<summary><b>Click to expand/collapse Python code</b></summary>
+
+```python
+    TRUSTED_PACKET_SEQUENCE_ID = 9005
+
+    # --- Define Track UUID ---
+    described_track_uuid = uuid.uuid4().int & ((1 << 63) - 1)
+    undescribed_track_uuid = uuid.uuid4().int & ((1 << 63) - 1)
+
+    # --- 1. Define two tracks, one with a description and one without ---
+    # Track WITH description
+    packet = builder.add_packet()
+    desc = packet.track_descriptor
+    desc.uuid = described_track_uuid
+    desc.name = "Track With Description"
+    desc.description = "This track shows the processing stages for incoming user requests. Click the (?) icon to see this text."
+
+    # Track WITHOUT description
+    packet = builder.add_packet()
+    desc = packet.track_descriptor
+    desc.uuid = undescribed_track_uuid
+    desc.name = "Track Without Description"
+    # The 'description' field is simply not set.
+
+    # Helper to add a slice event to the track
+    def add_slice_event(ts, event_type, event_track_uuid, name=None):
+        packet = builder.add_packet()
+        packet.timestamp = ts
+        packet.track_event.type = event_type
+        packet.track_event.track_uuid = event_track_uuid
+        if name:
+            packet.track_event.name = name
+        packet.trusted_packet_sequence_id = TRUSTED_PACKET_SEQUENCE_ID
+
+    # --- 2. Emit some events on both tracks ---
+    # Events for the described track
+    add_slice_event(ts=1000, event_type=TrackEvent.TYPE_SLICE_BEGIN,
+                    event_track_uuid=described_track_uuid, name="Request #123")
+    add_slice_event(ts=1200, event_type=TrackEvent.TYPE_SLICE_END,
+                    event_track_uuid=described_track_uuid)
+
+    # Events for the undescribed track
+    add_slice_event(ts=1300, event_type=TrackEvent.TYPE_SLICE_BEGIN,
+                    event_track_uuid=undescribed_track_uuid, name="Some Other Task")
+    add_slice_event(ts=1500, event_type=TrackEvent.TYPE_SLICE_END,
+                    event_track_uuid=undescribed_track_uuid)
+```
+
+</details>
+
+![Adding a Track Description](/docs/images/synthetic-track-event-description.png)
+
+## Advanced Event Writing
+
+This section covers advanced TrackEvent features for specialized use cases,
+including data optimization techniques and event linking mechanisms.
+
 ### Interning Data for Trace Size Optimization
 
 Interning is a technique used to reduce the size of trace files by emitting
@@ -433,7 +588,7 @@ Copy the following Python code into the `populate_packets(builder)` function in
 your `trace_converter_template.py` script.
 
 <details>
-<summary><a style="cursor: pointer;"><b>Click to expand/collapse Python code</b></a></summary>
+<summary><b>Click to expand/collapse Python code</b></summary>
 
 ```python
     TRUSTED_PACKET_SEQUENCE_ID = 9002
@@ -519,3 +674,359 @@ your `trace_converter_template.py` script.
 </details>
 
 ![Interning Data for Trace Size Optimization](/docs/images/synthetic-track-event-interning.png)
+
+### Linking Related Events with Correlation IDs
+
+Correlation IDs provide a way to visually link slices that are part of the same
+logical operation, even when they are not causally connected. Unlike flows,
+which represent direct cause-and-effect relationships, correlation IDs group
+events that share a common context or belong to the same high-level operation.
+
+**Common use cases:**
+
+- **GPU rendering**: Link all slices involved in rendering the same frame across
+  different GPU stages
+- **Distributed systems**: Group all slices related to the same RPC request as
+  it moves through different services
+- **Network processing**: Connect all slices involved in processing the same
+  network request through different kernel stages
+
+**Visual benefits:** The Perfetto UI can use correlation IDs to assign
+consistent colors to related slices or highlight the entire correlated set when
+one slice is hovered, making it easier to track related operations across
+different tracks.
+
+**Relationship to flows:**
+
+- Use **flows** when events have a direct causal relationship (A triggers B)
+- Use **correlation IDs** when events are part of the same logical operation but
+  not directly connected
+- You can use both together: flows for causal connections within a correlated
+  group
+
+Perfetto supports three types of correlation identifiers:
+
+- `correlation_id`: A 64-bit unsigned integer (most efficient, recommended for
+  most cases)
+- `correlation_id_str`: A string value (most flexible, human-readable)
+- `correlation_id_str_iid`: An interned string ID (see
+  [Interning Data for Trace Size Optimization](#interning-data-for-trace-size-optimization)
+  above for details on interning)
+
+#### Python Example
+
+This example demonstrates correlation IDs using integer identifiers by
+simulating different stages of processing for two separate requests across
+multiple service tracks.
+
+Copy the following Python code into the `populate_packets(builder)` function in
+your `trace_converter_template.py` script.
+
+<details>
+<summary><b>Click to expand/collapse Python code</b></summary>
+
+```python
+    TRUSTED_PACKET_SEQUENCE_ID = 9010
+
+    # --- Define Track UUIDs ---
+    frontend_track_uuid = uuid.uuid4().int & ((1 << 63) - 1)
+    auth_track_uuid = uuid.uuid4().int & ((1 << 63) - 1)
+    database_track_uuid = uuid.uuid4().int & ((1 << 63) - 1)
+    cache_track_uuid = uuid.uuid4().int & ((1 << 63) - 1)
+
+    # Helper to define a TrackDescriptor
+    def define_custom_track(track_uuid, name):
+        packet = builder.add_packet()
+        desc = packet.track_descriptor
+        desc.uuid = track_uuid
+        desc.name = name
+
+    # 1. Define the tracks
+    define_custom_track(frontend_track_uuid, "Frontend Service")
+    define_custom_track(auth_track_uuid, "Auth Service")
+    define_custom_track(database_track_uuid, "Database Service")
+    define_custom_track(cache_track_uuid, "Cache Service")
+
+    # Helper to add slice with correlation ID
+    def add_correlated_slice(ts_start, ts_end, track_uuid, slice_name, correlation_id):
+        # Start slice
+        packet = builder.add_packet()
+        packet.timestamp = ts_start
+        packet.track_event.type = TrackEvent.TYPE_SLICE_BEGIN
+        packet.track_event.track_uuid = track_uuid
+        packet.track_event.name = slice_name
+        packet.track_event.correlation_id = correlation_id
+        packet.trusted_packet_sequence_id = TRUSTED_PACKET_SEQUENCE_ID
+
+        # End slice
+        packet = builder.add_packet()
+        packet.timestamp = ts_end
+        packet.track_event.type = TrackEvent.TYPE_SLICE_END
+        packet.track_event.track_uuid = track_uuid
+        packet.trusted_packet_sequence_id = TRUSTED_PACKET_SEQUENCE_ID
+
+    # --- Request #42: All slices with correlation_id = 42 ---
+    REQUEST_42_ID = 42
+    add_correlated_slice(1000, 1200, frontend_track_uuid, "Handle Request #42", REQUEST_42_ID)
+    add_correlated_slice(1100, 1400, auth_track_uuid, "Authenticate Request #42", REQUEST_42_ID)
+    add_correlated_slice(1350, 1600, database_track_uuid, "Query for Request #42", REQUEST_42_ID)
+
+    # --- Request #123: All slices with correlation_id = 123 ---
+    REQUEST_123_ID = 123
+    add_correlated_slice(2000, 2300, frontend_track_uuid, "Handle Request #123", REQUEST_123_ID)
+    add_correlated_slice(2100, 2500, database_track_uuid, "Query for Request #123", REQUEST_123_ID)
+    add_correlated_slice(2400, 2600, cache_track_uuid, "Cache Request #123", REQUEST_123_ID)
+```
+
+</details>
+
+![Correlation IDs](/docs/images/synthetic-track-event-correlation-ids.png)
+
+## {#controlling-track-merging} Controlling Track Merging
+
+By default, the Perfetto UI merges tracks that share the same name. This is
+often the desired behavior for grouping related asynchronous events. However,
+there are scenarios where you need more explicit control. You can override this
+default merging logic using the `sibling_merge_behavior` and `sibling_merge_key`
+fields in the `TrackDescriptor`.
+
+This allows you to:
+
+- **Prevent merging**: Force tracks, even with the same name, to always be
+  displayed separately.
+- **Merge by key**: Force tracks to merge based on a custom key, regardless of
+  their names.
+
+The `sibling_merge_behavior` field can be set to one of the following values:
+
+- `SIBLING_MERGE_BEHAVIOR_BY_TRACK_NAME` (the default): Merges sibling tracks
+  that have the same `name`.
+- `SIBLING_MERGE_BEHAVIOR_NONE`: Prevents the track from being merged with any
+  of its siblings.
+- `SIBLING_MERGE_BEHAVIOR_BY_SIBLING_MERGE_KEY`: Merges sibling tracks that have
+  the same `sibling_merge_key` string.
+
+### Python Example: Preventing Merging
+
+In this example, we create two tracks with the same name. By setting their
+`sibling_merge_behavior` to `SIBLING_MERGE_BEHAVIOR_NONE`, we ensure they are
+always displayed as distinct tracks in the UI.
+
+<details>
+<summary><b>Click to expand/collapse Python code</b></summary>
+
+```python
+    TRUSTED_PACKET_SEQUENCE_ID = 9003
+
+    # --- Define Track UUIDs ---
+    track1_uuid = 1
+    track2_uuid = 2
+
+    # Helper to define a TrackDescriptor
+    def define_custom_track(track_uuid, name):
+        packet = builder.add_packet()
+        desc = packet.track_descriptor
+        desc.uuid = track_uuid
+        desc.name = name
+        desc.sibling_merge_behavior = TrackDescriptor.SIBLING_MERGE_BEHAVIOR_NONE
+
+    # 1. Define the tracks
+    define_custom_track(track1_uuid, "My Separate Track")
+    define_custom_track(track2_uuid, "My Separate Track")
+
+    # Helper to add a slice event
+    def add_slice_event(ts, event_type, event_track_uuid, name=None):
+        packet = builder.add_packet()
+        packet.timestamp = ts
+        packet.track_event.type = event_type
+        packet.track_event.track_uuid = event_track_uuid
+        if name:
+            packet.track_event.name = name
+        packet.trusted_packet_sequence_id = TRUSTED_PACKET_SEQUENCE_ID
+
+    # 2. Add events to the tracks
+    add_slice_event(ts=1000, event_type=TrackEvent.TYPE_SLICE_BEGIN, event_track_uuid=track1_uuid, name="Slice 1")
+    add_slice_event(ts=1100, event_type=TrackEvent.TYPE_SLICE_END, event_track_uuid=track1_uuid)
+
+    add_slice_event(ts=1200, event_type=TrackEvent.TYPE_SLICE_BEGIN, event_track_uuid=track2_uuid, name="Slice 2")
+    add_slice_event(ts=1300, event_type=TrackEvent.TYPE_SLICE_END, event_track_uuid=track2_uuid)
+```
+
+</details>
+
+![Preventing Merging](/docs/images/synthetic-track-event-no-merge.png)
+
+### Python Example: Merging by Key
+
+In this example, we create two tracks with different names but the same
+`sibling_merge_key`. By setting their `sibling_merge_behavior` to
+`SIBLING_MERGE_BEHAVIOR_BY_SIBLING_MERGE_KEY`, we instruct the UI to merge them
+into a single visual track. The name of the merged group will be taken from one
+of the tracks (usually the one with the lower UUID).
+
+<details>
+<summary><b>Click to expand/collapse Python code</b></summary>
+
+```python
+    TRUSTED_PACKET_SEQUENCE_ID = 9004
+
+    # --- Define Track UUIDs ---
+    track1_uuid = 1
+    track2_uuid = 2
+
+    # Helper to define a TrackDescriptor
+    def define_custom_track(track_uuid, name, merge_key):
+        packet = builder.add_packet()
+        desc = packet.track_descriptor
+        desc.uuid = track_uuid
+        desc.name = name
+        desc.sibling_merge_behavior = TrackDescriptor.SIBLING_MERGE_BEHAVIOR_BY_SIBLING_MERGE_KEY
+        desc.sibling_merge_key = merge_key
+
+    # 1. Define the tracks with the same merge key
+    define_custom_track(track1_uuid, "HTTP GET", "conn-123")
+    define_custom_track(track2_uuid, "HTTP POST", "conn-123")
+
+    # Helper to add a slice event
+    def add_slice_event(ts, event_type, event_track_uuid, name=None):
+        packet = builder.add_packet()
+        packet.timestamp = ts
+        packet.track_event.type = event_type
+        packet.track_event.track_uuid = event_track_uuid
+        if name:
+            packet.track_event.name = name
+        packet.trusted_packet_sequence_id = TRUSTED_PACKET_SEQUENCE_ID
+
+    # 2. Add events to the tracks
+    add_slice_event(ts=1000, event_type=TrackEvent.TYPE_SLICE_BEGIN, event_track_uuid=track1_uuid, name="GET /data")
+    add_slice_event(ts=1100, event_type=TrackEvent.TYPE_SLICE_END, event_track_uuid=track1_uuid)
+
+    add_slice_event(ts=1200, event_type=TrackEvent.TYPE_SLICE_BEGIN, event_track_uuid=track2_uuid, name="POST /submit")
+    add_slice_event(ts=1300, event_type=TrackEvent.TYPE_SLICE_END, event_track_uuid=track2_uuid)
+```
+
+</details>
+
+![Merging by Key](/docs/images/synthetic-track-event-merge-by-key.png)
+
+## {#handling-large-traces-with-streaming} Handling Large Traces with Streaming
+
+All the examples so far have used the `TraceProtoBuilder`, which builds the
+entire trace in memory before writing it to a file. This is simple and effective
+for moderately sized traces, but can lead to high memory consumption if you are
+generating traces with millions of events.
+
+For these scenarios, the `StreamingTraceProtoBuilder` is the recommended
+solution. It writes each `TracePacket` to a file as it's created, keeping memory
+usage minimal regardless of the trace size.
+
+### How it Works
+
+The API for the streaming builder is slightly different:
+
+1.  **Initialization**: You initialize `StreamingTraceProtoBuilder` with a
+    file-like object opened in binary write mode.
+2.  **Packet Creation**: Instead of `builder.add_packet()`, you call
+    `builder.create_packet()` to get a new, empty `TracePacket`.
+3.  **Packet Writing**: After populating the packet, you must explicitly call
+    `builder.write_packet(packet)` to serialize and write it to the file.
+
+### Python Example: Complete Streaming Script
+
+Here is a complete, standalone Python script that demonstrates how to use the
+`StreamingTraceProtoBuilder`. It is based on the "Creating Basic Timeline
+Slices" example from the
+[Getting Started guide](/docs/getting-started/converting.md).
+
+You can save this code as a new file (e.g., `streaming_converter.py`) and run
+it.
+
+<details>
+<summary><b>Click to expand/collapse Python code</b></summary>
+
+```python
+#!/usr/bin/env python3
+import uuid
+
+from perfetto.trace_builder.proto_builder import StreamingTraceProtoBuilder
+from perfetto.protos.perfetto.trace.perfetto_trace_pb2 import TrackEvent
+
+def populate_packets(builder: StreamingTraceProtoBuilder):
+    """
+    This function defines and writes TracePackets to the stream.
+
+    Args:
+        builder: An instance of StreamingTraceProtoBuilder.
+    """
+    # Define a unique ID for this sequence of packets
+    TRUSTED_PACKET_SEQUENCE_ID = 1001
+
+    # Define a unique UUID for your custom track
+    CUSTOM_TRACK_UUID = 12345678
+
+    # 1. Define the Custom Track
+    packet = builder.create_packet()
+    packet.track_descriptor.uuid = CUSTOM_TRACK_UUID
+    packet.track_descriptor.name = "My Custom Data Timeline"
+    builder.write_packet(packet)
+
+    # 2. Emit events for this custom track
+    # Example Event 1: "Task A"
+    packet = builder.create_packet()
+    packet.timestamp = 1000
+    packet.track_event.type = TrackEvent.TYPE_SLICE_BEGIN
+    packet.track_event.track_uuid = CUSTOM_TRACK_UUID
+    packet.track_event.name = "Task A"
+    packet.trusted_packet_sequence_id = TRUSTED_PACKET_SEQUENCE_ID
+    builder.write_packet(packet)
+
+    packet = builder.create_packet()
+    packet.timestamp = 1500
+    packet.track_event.type = TrackEvent.TYPE_SLICE_END
+    packet.track_event.track_uuid = CUSTOM_TRACK_UUID
+    packet.trusted_packet_sequence_id = TRUSTED_PACKET_SEQUENCE_ID
+    builder.write_packet(packet)
+
+    # Example Event 2: "Task B"
+    packet = builder.create_packet()
+    packet.timestamp = 1600
+    packet.track_event.type = TrackEvent.TYPE_SLICE_BEGIN
+    packet.track_event.track_uuid = CUSTOM_TRACK_UUID
+    packet.track_event.name = "Task B"
+    packet.trusted_packet_sequence_id = TRUSTED_PACKET_SEQUENCE_ID
+    builder.write_packet(packet)
+
+    packet = builder.create_packet()
+    packet.timestamp = 1800
+    packet.track_event.type = TrackEvent.TYPE_SLICE_END
+    packet.track_event.track_uuid = CUSTOM_TRACK_UUID
+    packet.trusted_packet_sequence_id = TRUSTED_PACKET_SEQUENCE_ID
+    builder.write_packet(packet)
+
+    # Example Event 3: An instantaneous event
+    packet = builder.create_packet()
+    packet.timestamp = 1900
+    packet.track_event.type = TrackEvent.TYPE_INSTANT
+    packet.track_event.track_uuid = CUSTOM_TRACK_UUID
+    packet.track_event.name = "Milestone Y"
+    packet.trusted_packet_sequence_id = TRUSTED_PACKET_SEQUENCE_ID
+    builder.write_packet(packet)
+
+def main():
+    """
+    Initializes the StreamingTraceProtoBuilder and calls populate_packets
+    to write the trace to a file.
+    """
+    output_filename = "my_streamed_trace.pftrace"
+    with open(output_filename, 'wb') as f:
+        builder = StreamingTraceProtoBuilder(f)
+        populate_packets(builder)
+
+    print(f"Trace written to {output_filename}")
+    print(f"Open with [https://ui.perfetto.dev](https://ui.perfetto.dev).")
+
+if __name__ == "__main__":
+    main()
+```
+
+</details>

@@ -55,7 +55,6 @@ BaseTrackEventInternedDataIndex::~BaseTrackEventInternedDataIndex() = default;
 
 namespace {
 
-static constexpr const char kLegacySlowPrefix[] = "disabled-by-default-";
 static constexpr const char kSlowTag[] = "slow";
 static constexpr const char kDebugTag[] = "debug";
 static constexpr const char kFilteredEventName[] = "FILTERED";
@@ -195,20 +194,11 @@ bool TrackEventInternal::Initialize(
       cat->set_name(category->name);
       if (category->description)
         cat->set_description(category->description);
-      bool has_slow_tag = false;
       for (const auto& tag : category->tags) {
         if (tag) {
           cat->add_tags(tag);
-          if (!strcmp(tag, kSlowTag)) {
-            has_slow_tag = true;
-          }
         }
       }
-      // Disabled-by-default categories get a "slow" tag.
-      if (!strncmp(category->name, kLegacySlowPrefix,
-                   strlen(kLegacySlowPrefix)) &&
-          !has_slow_tag)
-        cat->add_tags(kSlowTag);
     }
   }
   dsd.set_track_event_descriptor_raw(ted.SerializeAsString());
@@ -364,11 +354,6 @@ bool TrackEventInternal::IsCategoryEnabled(
       if (matcher(tag))
         return true;
     }
-    // Legacy "disabled-by-default" categories automatically get the "slow" tag.
-    if (!strncmp(category.name, kLegacySlowPrefix, strlen(kLegacySlowPrefix)) &&
-        matcher(kSlowTag)) {
-      return true;
-    }
     return false;
   };
 
@@ -387,21 +372,6 @@ bool TrackEventInternal::IsCategoryEnabled(
     if (NameMatchesPatternList(config.disabled_categories(), category.name,
                                match_type)) {
       return false;
-    }
-
-    // 2.5. A special case for Chrome's legacy disabled-by-default categories.
-    // We treat them as having a "slow" tag with one exception: they can be
-    // enabled by a pattern if the pattern starts with "disabled-by-default-"
-    // itself.
-    if (match_type == MatchType::kExact &&
-        !strncmp(category.name, kLegacySlowPrefix, strlen(kLegacySlowPrefix))) {
-      for (const auto& pattern : config.enabled_categories()) {
-        if (!strncmp(pattern.c_str(), kLegacySlowPrefix,
-                     strlen(kLegacySlowPrefix)) &&
-            NameMatchesPattern(pattern, category.name, MatchType::kPattern)) {
-          return true;
-        }
-      }
     }
 
     // 3. Disabled tags.
@@ -622,13 +592,22 @@ EventContext TrackEventInternal::WriteEvent(
     track_event->set_type(type);
 
   if (tls_state.enable_thread_time_sampling && on_current_thread_track) {
-    int64_t thread_time_ns = base::GetThreadCPUTimeNs().count();
-    auto thread_time_delta_ns =
-        thread_time_ns - incr_state->last_thread_time_ns;
-    incr_state->last_thread_time_ns = thread_time_ns;
-    track_event->add_extra_counter_values(
-        thread_time_delta_ns /
-        static_cast<int64_t>(tls_state.timestamp_unit_multiplier));
+    if (tls_state.thread_time_subsampling_ns == 0 ||
+        incr_state->last_thread_time_timestamp_ns == 0 ||
+        timestamp.value >= incr_state->last_thread_time_timestamp_ns +
+                               tls_state.thread_time_subsampling_ns) {
+      auto thread_time_ns = base::GetThreadCPUTimeNs().count();
+      auto thread_time_delta_ns =
+          thread_time_ns - incr_state->last_thread_time_ns;
+      incr_state->last_thread_time_ns = thread_time_ns;
+      incr_state->last_thread_time_timestamp_ns = timestamp.value;
+      track_event->add_extra_counter_values(
+          thread_time_delta_ns /
+          static_cast<int64_t>(tls_state.timestamp_unit_multiplier));
+    } else {
+      // When subsampling, the skip emitting values.
+      track_event->add_extra_counter_values(0);
+    }
   }
 
   // We assume that |category| points to the string with static lifetime.

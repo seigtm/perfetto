@@ -36,10 +36,16 @@ interface QueryResultBypass {
 }
 
 export interface TraceProcessorConfig {
+  // When true, the trace processor will only tokenize the trace without
+  // performing a full parse. This is a performance optimization that allows for
+  // a faster, albeit partial, import of the trace.
+  tokenizeOnly: boolean;
   cropTrackEvents: boolean;
   ingestFtraceInRawTable: boolean;
   analyzeTraceProtoContent: boolean;
   ftraceDropUntilAllCpusValid: boolean;
+  extraParsingDescriptors?: ReadonlyArray<Uint8Array>;
+  forceFullSort: boolean;
 }
 
 const QUERY_LOG_BUFFER_SIZE = 100;
@@ -146,7 +152,6 @@ export abstract class EngineBase implements Engine, Disposable {
   private pendingRegisterSqlPackage?: Deferred<void>;
   private pendingAnalyzeStructuredQueries?: Deferred<protos.AnalyzeStructuredQueryResult>;
   private pendingTraceSummary?: Deferred<protos.TraceSummaryResult>;
-  private _isMetatracingEnabled = false;
   private _numRequestsPending = 0;
   private _failed: string | undefined = undefined;
   private _queryLog: Array<QueryLog> = [];
@@ -322,6 +327,10 @@ export abstract class EngineBase implements Engine, Disposable {
         x.resolve(analyzeRes);
         this.pendingAnalyzeStructuredQueries = undefined;
         break;
+      case TPM.TPM_ENABLE_METATRACE:
+        // We don't have any pending promises for this request so just
+        // return.
+        break;
       default:
         console.log(
           'Unexpected TraceProcessor response received: ',
@@ -368,10 +377,13 @@ export abstract class EngineBase implements Engine, Disposable {
   // TraceProcessor instance, so it should be called before passing any trace
   // data.
   resetTraceProcessor({
+    tokenizeOnly,
     cropTrackEvents,
     ingestFtraceInRawTable,
     analyzeTraceProtoContent,
     ftraceDropUntilAllCpusValid,
+    extraParsingDescriptors,
+    forceFullSort,
   }: TraceProcessorConfig): Promise<void> {
     const asyncRes = defer<void>();
     this.pendingResetTraceProcessors.push(asyncRes);
@@ -386,6 +398,17 @@ export abstract class EngineBase implements Engine, Disposable {
     args.ingestFtraceInRawTable = ingestFtraceInRawTable;
     args.analyzeTraceProtoContent = analyzeTraceProtoContent;
     args.ftraceDropUntilAllCpusValid = ftraceDropUntilAllCpusValid;
+    args.sortingMode = forceFullSort
+      ? protos.ResetTraceProcessorArgs.SortingMode.FORCE_FULL_SORT
+      : protos.ResetTraceProcessorArgs.SortingMode.DEFAULT_HEURISTICS;
+    args.parsingMode = tokenizeOnly
+      ? protos.ResetTraceProcessorArgs.ParsingMode.TOKENIZE_ONLY
+      : protos.ResetTraceProcessorArgs.ParsingMode.DEFAULT;
+    // If extraParsingDescriptors is defined, create a mutable copy for the
+    // protobuf object; otherwise, pass an empty array.
+    args.extraParsingDescriptors = extraParsingDescriptors
+      ? [...extraParsingDescriptors]
+      : [];
     this.rpcSendRequest(rpc);
     return asyncRes;
   }
@@ -492,10 +515,9 @@ export abstract class EngineBase implements Engine, Disposable {
   //
   // Optional |tag| (usually a component name) can be provided to allow
   // attributing trace processor workload to different UI components.
-  private streamingQuery(
-    sqlQuery: string,
-    tag?: string,
-  ): Promise<QueryResult> & QueryResult {
+  // NOTE: the only reason why this is public is so that Winscope (which uses a
+  // fork of our codebase) can invoke this directly. See commit msg of #3051.
+  streamingQuery(result: WritableQueryResult, sqlQuery: string, tag?: string) {
     const rpc = protos.TraceProcessorRpc.create();
     rpc.request = TPM.TPM_QUERY_STREAMING;
     rpc.queryArgs = new protos.QueryArgs();
@@ -503,12 +525,8 @@ export abstract class EngineBase implements Engine, Disposable {
     if (tag) {
       rpc.queryArgs.tag = tag;
     }
-    const result = createQueryResult({
-      query: sqlQuery,
-    });
     this.pendingQueries.push(result);
     this.rpcSendRequest(rpc);
-    return result;
   }
 
   private logQueryStart(
@@ -534,9 +552,11 @@ export abstract class EngineBase implements Engine, Disposable {
   async query(sqlQuery: string, tag?: string): Promise<QueryResult> {
     const queryLog = this.logQueryStart(sqlQuery);
     try {
-      const result = await this.streamingQuery(sqlQuery, tag);
+      const result = createQueryResult({query: sqlQuery});
+      this.streamingQuery(result, sqlQuery, tag);
+      const resolvedResult = await result;
       queryLog.success = true;
-      return result;
+      return resolvedResult;
     } catch (e) {
       // Replace the error's stack trace with the one from here
       // Note: It seems only V8 can trace the stack up the promise chain, so its
@@ -561,10 +581,6 @@ export abstract class EngineBase implements Engine, Disposable {
     }
   }
 
-  isMetatracingEnabled(): boolean {
-    return this._isMetatracingEnabled;
-  }
-
   enableMetatrace(categories?: protos.MetatraceCategories) {
     const rpc = protos.TraceProcessorRpc.create();
     rpc.request = TPM.TPM_ENABLE_METATRACE;
@@ -575,7 +591,6 @@ export abstract class EngineBase implements Engine, Disposable {
       rpc.enableMetatraceArgs = new protos.EnableMetatraceArgs();
       rpc.enableMetatraceArgs.categories = categories;
     }
-    this._isMetatracingEnabled = true;
     this.rpcSendRequest(rpc);
   }
 
@@ -589,7 +604,6 @@ export abstract class EngineBase implements Engine, Disposable {
 
     const rpc = protos.TraceProcessorRpc.create();
     rpc.request = TPM.TPM_DISABLE_AND_READ_METATRACE;
-    this._isMetatracingEnabled = false;
     this.pendingReadMetatrace = result;
     this.rpcSendRequest(rpc);
     return result;

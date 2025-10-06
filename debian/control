@@ -1,8 +1,10 @@
 Source: perfetto
-Section: kernel
+Section: utils
 Priority: optional
-Maintainer: Sami Kyostila <skyostil@google.com>
-Build-Depends: debhelper (>= 13),
+Maintainer: Perfetto Team <perfetto-dev-team@google.com>
+Build-Depends:
+  debhelper (>= 13),
+  debhelper-compat (= 13),
   generate-ninja,
   git,
   libprotoc-dev,

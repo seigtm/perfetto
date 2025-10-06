@@ -162,7 +162,7 @@ base::Status StepStatus(sqlite3_context* ctx,
   return slice_packer.value()->AddSlice(ts.AsLong(), dur.AsLong());
 }
 
-struct InternalLayout : public SqliteWindowFunction {
+struct InternalLayout : public sqlite::WindowFunction {
   static void Step(sqlite3_context* ctx, int argc, sqlite3_value** argv) {
     PERFETTO_CHECK(argc >= 0);
 
@@ -204,8 +204,8 @@ The inverse step is not supported: the window clause should be
 }  // namespace
 
 base::Status RegisterLayoutFunctions(PerfettoSqlEngine& engine) {
-  return engine.RegisterSqliteWindowFunction<InternalLayout>(kFunctionName, 2,
-                                                             nullptr);
+  return engine.RegisterWindowFunction<InternalLayout>(kFunctionName, 2,
+                                                       nullptr);
 }
 
 }  // namespace perfetto::trace_processor

@@ -13,6 +13,8 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 
+INCLUDE PERFETTO MODULE prelude.after_eof.indexes;
+
 INCLUDE PERFETTO MODULE prelude.after_eof.views;
 
 -- Lists all metrics built-into trace processor.
@@ -72,7 +74,16 @@ CREATE PERFETTO VIEW track (
   -- expand the args.
   source_arg_set_id ARGSETID,
   -- Machine identifier, non-null for tracks on a remote machine.
-  machine_id LONG
+  machine_id LONG,
+  -- An opaque key indicating that this track belongs to a group of tracks which
+  -- are "conceptually" the same track.
+  --
+  -- Tracks in trace processor don't allow overlapping events to allow for easy
+  -- analysis (i.e. SQL window functions, SPAN JOIN and other similar
+  -- operators). However, in visualization settings (e.g. the UI), the
+  -- distinction doesn't matter and all tracks with the same `track_group_id`
+  -- should be merged together into a single logical "UI track".
+  track_group_id LONG
 ) AS
 SELECT
   id,
@@ -81,7 +92,8 @@ SELECT
   dimension_arg_set_id,
   parent_id,
   source_arg_set_id,
-  machine_id
+  machine_id,
+  track_group_id
 FROM __intrinsic_track;
 
 -- Contains information about the CPUs on the device this trace was taken on.
@@ -748,7 +760,8 @@ CREATE PERFETTO TABLE perf_counter_track (
   description STRING,
   -- The id of the perf session this counter was captured on.
   perf_session_id LONG,
-  -- The CPU the counter is associated with.
+  -- The CPU the counter is associated with. Can be null if the counter is not
+  -- associated with any CPU.
   cpu LONG,
   -- Whether this counter is the sampling timebase for the session.
   is_timebase BOOL
@@ -767,7 +780,7 @@ SELECT
   extract_arg(ct.source_arg_set_id, 'is_timebase') AS is_timebase
 FROM counter_track AS ct
 WHERE
-  ct.type = 'perf_counter';
+  ct.type IN ('perf_cpu_counter', 'perf_global_counter');
 
 -- Alias of the `counter` table.
 CREATE PERFETTO VIEW counters (
@@ -969,7 +982,9 @@ FROM slice AS s
 JOIN process_track AS t
   ON s.track_id = t.id
 WHERE
-  t.type = 'android_expected_frame_timeline';
+  t.type = 'android_expected_frame_timeline'
+ORDER BY
+  s.id;
 
 -- This table contains information on the actual timeline and additional
 -- analysis related to the performance of either a display frame or a surface
@@ -1015,7 +1030,9 @@ CREATE PERFETTO TABLE actual_frame_timeline_slice (
   -- Frame's prediction type (eg. valid / expired).
   prediction_type STRING,
   -- Jank tag based on jank type, used for slice visualization.
-  jank_tag STRING
+  jank_tag STRING,
+  -- Jank tag (experimental) based on jank type, used for slice visualization.
+  jank_tag_experimental STRING
 ) AS
 SELECT
   s.id,
@@ -1037,12 +1054,15 @@ SELECT
   extract_arg(s.arg_set_id, 'Jank type') AS jank_type,
   extract_arg(s.arg_set_id, 'Jank severity type') AS jank_severity_type,
   extract_arg(s.arg_set_id, 'Prediction type') AS prediction_type,
-  extract_arg(s.arg_set_id, 'Jank tag') AS jank_tag
+  extract_arg(s.arg_set_id, 'Jank tag') AS jank_tag,
+  extract_arg(s.arg_set_id, 'Jank tag (experimental)') AS jank_tag_experimental
 FROM slice AS s
 JOIN process_track AS t
   ON s.track_id = t.id
 WHERE
-  t.type = 'android_actual_frame_timeline';
+  t.type = 'android_actual_frame_timeline'
+ORDER BY
+  s.id;
 
 -- Stores class information within ART heap graphs. It represents Java/Kotlin
 -- classes that exist in the heap, including their names, inheritance

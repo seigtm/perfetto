@@ -322,13 +322,23 @@ base::Status ExportTraceToDatabase(const std::string& output_name) {
 }
 
 class ErrorPrinter : public google::protobuf::io::ErrorCollector {
+#if GOOGLE_PROTOBUF_VERSION >= 4022000
+  void RecordError(int line, int col, absl::string_view msg) override {
+    PERFETTO_ELOG("%d:%d: %.*s", line, col, static_cast<int>(msg.size()),
+                  msg.data());
+  }
+  void RecordWarning(int line, int col, absl::string_view msg) override {
+    PERFETTO_ILOG("%d:%d: %.*s", line, col, static_cast<int>(msg.size()),
+                  msg.data());
+  }
+#else
   void AddError(int line, int col, const std::string& msg) override {
     PERFETTO_ELOG("%d:%d: %s", line, col, msg.c_str());
   }
-
   void AddWarning(int line, int col, const std::string& msg) override {
     PERFETTO_ILOG("%d:%d: %s", line, col, msg.c_str());
   }
+#endif
 };
 
 // This function returns an identifier for a metric suitable for use
@@ -699,6 +709,7 @@ struct CommandLineOptions {
   bool enable_httpd = false;
   std::string port_number;
   std::string listen_ip;
+  std::vector<std::string> additional_cors_origins;
   bool enable_stdiod = false;
   bool launch_shell = false;
 
@@ -753,6 +764,12 @@ Behavioural:
  -D, --httpd                          Enables the HTTP RPC server.
  --http-port PORT                     Specify what port to run HTTP RPC server.
  --http-ip-address ip                 Specify what ip address to run HTTP RPC server.
+ --http-additional-cors-origins origin1,origin2,...
+                                      Specify a comma-separated list of
+                                      additional CORS allowed origins for the
+                                      HTTP RPC server. These are in addition to
+                                      the default origins: [https://ui.perfetto.dev,
+                                      http://localhost:10000, http://127.0.0.1:10000]
  --stdiod                             Enables the stdio RPC server.
  -i, --interactive                    Starts interactive mode even after
                                       executing some other commands (-q, -Q,
@@ -905,6 +922,7 @@ CommandLineOptions ParseCommandLineOptions(int argc, char** argv) {
   enum LongOption {
     OPT_HTTP_PORT = 1000,
     OPT_HTTP_IP,
+    OPT_HTTP_ADDITIONAL_CORS_ORIGINS,
     OPT_STDIOD,
 
     OPT_FORCE_FULL_SORT,
@@ -943,6 +961,8 @@ CommandLineOptions ParseCommandLineOptions(int argc, char** argv) {
       {"httpd", no_argument, nullptr, 'D'},
       {"http-port", required_argument, nullptr, OPT_HTTP_PORT},
       {"http-ip-address", required_argument, nullptr, OPT_HTTP_IP},
+      {"http-additional-cors-origins", required_argument, nullptr,
+       OPT_HTTP_ADDITIONAL_CORS_ORIGINS},
       {"stdiod", no_argument, nullptr, OPT_STDIOD},
       {"interactive", no_argument, nullptr, 'i'},
 
@@ -1043,6 +1063,12 @@ CommandLineOptions ParseCommandLineOptions(int argc, char** argv) {
 
     if (option == OPT_HTTP_IP) {
       command_line_options.listen_ip = optarg;
+      continue;
+    }
+
+    if (option == OPT_HTTP_ADDITIONAL_CORS_ORIGINS) {
+      command_line_options.additional_cors_origins =
+          base::SplitString(optarg, ",");
       continue;
     }
 
@@ -1241,39 +1267,58 @@ base::Status LoadTrace(const std::string& trace_file_path, double* size_mb) {
                            trace_file_path.c_str(), read_status.c_message());
   }
 
-  std::unique_ptr<profiling::Symbolizer> symbolizer =
-      profiling::LocalSymbolizerOrDie(profiling::GetPerfettoBinaryPath(),
-                                      getenv("PERFETTO_SYMBOLIZER_MODE"));
-
-  if (symbolizer) {
-    g_tp->Flush();
-    profiling::SymbolizeDatabase(
-        g_tp, symbolizer.get(), [](const std::string& trace_proto) {
-          std::unique_ptr<uint8_t[]> buf(new uint8_t[trace_proto.size()]);
-          memcpy(buf.get(), trace_proto.data(), trace_proto.size());
-          auto status = g_tp->Parse(std::move(buf), trace_proto.size());
-          if (!status.ok()) {
-            PERFETTO_DFATAL_OR_ELOG("Failed to parse: %s",
-                                    status.message().c_str());
-            return;
-          }
-        });
+  bool is_proto_trace = false;
+  {
+    auto it = g_tp->ExecuteQuery(
+        "SELECT str_value FROM metadata WHERE name = 'trace_type'");
+    if (it.Next() && it.Get(0).type == SqlValue::kString) {
+      if (std::string_view(it.Get(0).AsString()) == "proto") {
+        is_proto_trace = true;
+      }
+    }
   }
 
+  std::unique_ptr<profiling::Symbolizer> symbolizer =
+      profiling::MaybeLocalSymbolizer(profiling::GetPerfettoBinaryPath(), {},
+                                      getenv("PERFETTO_SYMBOLIZER_MODE"));
+  if (symbolizer) {
+    if (is_proto_trace) {
+      g_tp->Flush();
+      profiling::SymbolizeDatabase(
+          g_tp, symbolizer.get(), [](const std::string& trace_proto) {
+            std::unique_ptr<uint8_t[]> buf(new uint8_t[trace_proto.size()]);
+            memcpy(buf.get(), trace_proto.data(), trace_proto.size());
+            auto status = g_tp->Parse(std::move(buf), trace_proto.size());
+            if (!status.ok()) {
+              PERFETTO_DFATAL_OR_ELOG("Failed to parse: %s",
+                                      status.message().c_str());
+              return;
+            }
+          });
+    } else {
+      // TODO(lalitm): support symbolization for non-proto traces.
+      PERFETTO_ELOG("Skipping symbolization for non-proto trace");
+    }
+  }
   auto maybe_map = profiling::GetPerfettoProguardMapPath();
   if (!maybe_map.empty()) {
-    g_tp->Flush();
-    profiling::ReadProguardMapsToDeobfuscationPackets(
-        maybe_map, [](const std::string& trace_proto) {
-          std::unique_ptr<uint8_t[]> buf(new uint8_t[trace_proto.size()]);
-          memcpy(buf.get(), trace_proto.data(), trace_proto.size());
-          auto status = g_tp->Parse(std::move(buf), trace_proto.size());
-          if (!status.ok()) {
-            PERFETTO_DFATAL_OR_ELOG("Failed to parse: %s",
-                                    status.message().c_str());
-            return;
-          }
-        });
+    if (is_proto_trace) {
+      g_tp->Flush();
+      profiling::ReadProguardMapsToDeobfuscationPackets(
+          maybe_map, [](const std::string& trace_proto) {
+            std::unique_ptr<uint8_t[]> buf(new uint8_t[trace_proto.size()]);
+            memcpy(buf.get(), trace_proto.data(), trace_proto.size());
+            auto status = g_tp->Parse(std::move(buf), trace_proto.size());
+            if (!status.ok()) {
+              PERFETTO_DFATAL_OR_ELOG("Failed to parse: %s",
+                                      status.message().c_str());
+              return;
+            }
+          });
+    } else {
+      // TODO(lalitm): support deobfuscation for non-proto traces.
+      PERFETTO_ELOG("Skipping deobfuscation for non-proto trace");
+    }
   }
   return g_tp->NotifyEndOfFile();
 }
@@ -1360,7 +1405,7 @@ base::Status ParseMetricExtensionPaths(
 base::Status IncludeSqlPackage(std::string root, bool allow_override) {
   // Remove trailing slash
   if (root.back() == '/')
-    root = root.substr(0, root.length() - 1);
+    root.resize(root.length() - 1);
 
   if (!base::FileExists(root))
     return base::ErrStatus("Directory %s does not exist.", root.c_str());
@@ -1412,7 +1457,7 @@ base::Status IncludeSqlPackage(std::string root, bool allow_override) {
 base::Status LoadOverridenStdlib(std::string root) {
   // Remove trailing slash
   if (root.back() == '/') {
-    root = root.substr(0, root.length() - 1);
+    root.resize(root.length() - 1);
   }
 
   if (!base::FileExists(root)) {
@@ -1769,7 +1814,7 @@ base::Status RegisterAllFilesInFolder(const std::string& path,
       return base::ErrStatus("Failed to mmap file: %s", file_full_path.c_str());
     }
     RETURN_IF_ERROR(tp.RegisterFileContent(
-        file_full_path, TraceBlobView(TraceBlob::FromMmap(std::move(mmap)))));
+        file_full_path, TraceBlob::FromMmap(std::move(mmap))));
   }
   return base::OkStatus();
 }
@@ -2005,8 +2050,12 @@ base::Status TraceProcessorMain(int argc, char** argv) {
 #endif
 
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_HTTPD)
-    RunHttpRPCServer(std::move(tp), !options.trace_file_path.empty(),
-                     options.listen_ip, options.port_number);
+    RunHttpRPCServer(
+        /*preloaded_instance=*/std::move(tp),
+        /*is_preloaded_eof=*/!options.trace_file_path.empty(),
+        /*listen_ip=*/options.listen_ip,
+        /*port_number=*/options.port_number,
+        /*additional_cors_origins=*/options.additional_cors_origins);
     PERFETTO_FATAL("Should never return");
 #else
     PERFETTO_FATAL("HTTP not available");

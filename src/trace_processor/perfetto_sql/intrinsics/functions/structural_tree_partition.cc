@@ -45,7 +45,7 @@ struct Row {
   uint32_t group;
 };
 
-struct AggCtx : SqliteAggregateContext<AggCtx> {
+struct AggCtx : sqlite::AggregateContext<AggCtx> {
   std::vector<Row> input;
   std::vector<uint32_t> child_count_by_id;
   std::optional<Row> root;
@@ -96,6 +96,9 @@ void StructuralTreePartition::StructuralTreePartition::Step(
           "NULL parent_id) expected.");
     }
     agg_ctx.root = Row{id, kNullParentId, group};
+    if (id >= agg_ctx.child_count_by_id.size()) {
+      agg_ctx.child_count_by_id.resize(id + 1);
+    }
     return;
   }
 

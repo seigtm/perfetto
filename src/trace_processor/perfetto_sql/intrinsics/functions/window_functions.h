@@ -17,11 +17,11 @@
 #ifndef SRC_TRACE_PROCESSOR_PERFETTO_SQL_INTRINSICS_FUNCTIONS_WINDOW_FUNCTIONS_H_
 #define SRC_TRACE_PROCESSOR_PERFETTO_SQL_INTRINSICS_FUNCTIONS_WINDOW_FUNCTIONS_H_
 
-#include <sqlite3.h>
 #include <cstdint>
 #include <type_traits>
 
 #include "perfetto/base/logging.h"
+#include "perfetto/base/status.h"
 #include "src/trace_processor/perfetto_sql/engine/perfetto_sql_engine.h"
 #include "src/trace_processor/sqlite/bindings/sqlite_result.h"
 #include "src/trace_processor/sqlite/bindings/sqlite_window_function.h"
@@ -94,7 +94,7 @@ static_assert(std::is_trivial_v<LastNonNullAggregateContext>,
               "Must be able to be destroyed by just calling free (i.e. no "
               "destructor called)");
 
-class LastNonNull : public SqliteWindowFunction {
+class LastNonNull : public sqlite::WindowFunction {
  public:
   static void Step(sqlite3_context* ctx, int argc, sqlite3_value** argv) {
     if (argc != 1) {
@@ -136,8 +136,8 @@ class LastNonNull : public SqliteWindowFunction {
 };
 
 inline base::Status RegisterLastNonNullFunction(PerfettoSqlEngine& engine) {
-  return engine.RegisterSqliteWindowFunction<LastNonNull>("LAST_NON_NULL", 1,
-                                                          nullptr);
+  return engine.RegisterWindowFunction<LastNonNull>("LAST_NON_NULL", 1,
+                                                    nullptr);
 }
 
 }  // namespace perfetto::trace_processor

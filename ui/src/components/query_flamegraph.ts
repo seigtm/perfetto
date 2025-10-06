@@ -37,8 +37,10 @@ import {
   FlamegraphState,
   FlamegraphView,
   FlamegraphOptionalAction,
+  FlamegraphOptionalMarker,
 } from '../widgets/flamegraph';
 import {Trace} from '../public/trace';
+import {sqliteString} from '../base/string_utils';
 
 export interface QueryFlamegraphColumn {
   // The name of the column in SQL.
@@ -47,15 +49,14 @@ export interface QueryFlamegraphColumn {
   // The human readable name describing the contents of the column.
   readonly displayName: string;
 
-  // Whether the name should be displayed in the UI.
-  readonly isVisible?: boolean;
+  // Function that determines whether the property should be displayed for a
+  // given node.
+  readonly isVisible?: (value: string) => boolean;
 }
 
 export interface AggQueryFlamegraphColumn extends QueryFlamegraphColumn {
   // The aggregation to be run when nodes are merged together in the flamegraph.
-  //
-  // TODO(lalitm): consider adding extra functions here (e.g. a top 5 or similar).
-  readonly mergeAggregation: 'ONE_OR_NULL' | 'SUM' | 'CONCAT_WITH_COMMA';
+  readonly mergeAggregation: 'ONE_OR_SUMMARY' | 'SUM' | 'CONCAT_WITH_COMMA';
 }
 
 export interface QueryFlamegraphMetric {
@@ -105,6 +106,13 @@ export interface QueryFlamegraphMetric {
   // Examples include showing a table of objects from a class reference
   // hierarchy.
   readonly optionalRootActions?: ReadonlyArray<FlamegraphOptionalAction>;
+
+  // Optional marker to be displayed on flamegraph nodes. Marker appears as
+  // a visual indicator (small dot) on the left side of nodes and is shown
+  // in the tooltip.
+  //
+  // Examples include marking inlined functions, optimized code, etc.
+  readonly optionalMarker?: FlamegraphOptionalMarker;
 }
 
 export interface QueryFlamegraphState {
@@ -192,6 +200,7 @@ async function computeFlamegraphTree(
     aggregatableProperties,
     optionalNodeActions,
     optionalRootActions,
+    optionalMarker,
   }: QueryFlamegraphMetric,
   {filters, view}: FlamegraphState,
 ): Promise<FlamegraphQueryData> {
@@ -222,7 +231,8 @@ async function computeFlamegraphTree(
   const matchingColumns = ['name', ...unaggCols];
   const matchExpr = (x: string) =>
     matchingColumns.map(
-      (c) => `(IFNULL(${c}, '') like '${makeSqlFilter(x)}' escape '\\')`,
+      (c) =>
+        `(IFNULL(${c}, '') like ${sqliteString(makeSqlFilter(x))} escape '\\')`,
     );
 
   const showStackFilter =
@@ -452,13 +462,26 @@ async function computeFlamegraphTree(
     for (const a of [...agg, ...unagg]) {
       const r = it.get(a.name);
       if (r !== null) {
+        const value = r as string;
         properties.set(a.name, {
           displayName: a.displayName,
-          value: r as string,
-          isVisible: a.isVisible ?? true,
+          value,
+          isVisible: a.isVisible ? a.isVisible(value) : true,
         });
       }
     }
+
+    // Evaluate marker
+    let marker: string | undefined;
+    if (
+      optionalMarker &&
+      optionalMarker.isVisible(
+        new Map([...properties].map(([k, v]) => [k, v.value])),
+      )
+    ) {
+      marker = optionalMarker.name;
+    }
+
     nodes.push({
       id: it.id,
       parentId: it.parentId,
@@ -470,6 +493,7 @@ async function computeFlamegraphTree(
       xStart: it.xStart,
       xEnd: it.xEnd,
       properties,
+      marker,
     });
     if (it.depth === 1) {
       postiveRootsValue += it.cumulativeValue;
@@ -518,8 +542,14 @@ function getPivotFilter(
 function computeGroupedAggExprs(agg: ReadonlyArray<AggQueryFlamegraphColumn>) {
   const aggFor = (x: AggQueryFlamegraphColumn) => {
     switch (x.mergeAggregation) {
-      case 'ONE_OR_NULL':
-        return `IIF(COUNT() = 1, ${x.name}, NULL) AS ${x.name}`;
+      case 'ONE_OR_SUMMARY':
+        return `
+          ${x.name} || IIF(
+            COUNT(DISTINCT ${x.name}) = 1,
+            '',
+            ' ' || ' and ' || cast_string!(COUNT(DISTINCT ${x.name})) || ' others'
+          ) AS ${x.name}
+        `;
       case 'SUM':
         return `SUM(${x.name}) AS ${x.name}`;
       case 'CONCAT_WITH_COMMA':

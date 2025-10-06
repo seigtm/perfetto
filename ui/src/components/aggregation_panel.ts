@@ -34,7 +34,7 @@ export class AggregationPanel
   view({attrs}: m.CVnode<AggregationPanelAttrs>) {
     const {dataSource, sorting, columns, barChartData} = attrs;
 
-    return m(Stack, {fillHeight: true, gap: 'none'}, [
+    return m(Stack, {fillHeight: true, spacing: 'none'}, [
       barChartData && m(StackFixed, m(Box, this.renderBarChart(barChartData))),
       m(StackAuto, this.renderTable(dataSource, sorting, columns)),
     ]);
@@ -90,8 +90,11 @@ export class AggregationPanel
   private renderCell(value: SqlValue, colName: string, formatHint?: string) {
     if (formatHint === 'DURATION_NS' && typeof value === 'bigint') {
       return m('span.pf-data-grid__cell--number', Duration.humanise(value));
-    } else if (formatHint === 'PERCENT') {
-      return m('span.pf-data-grid__cell--number', `${value}%`);
+    } else if (formatHint === 'PERCENT' && typeof value === 'number') {
+      return m(
+        'span.pf-data-grid__cell--number',
+        `${(value * 100).toFixed(2)}%`,
+      );
     } else {
       return renderCell(value, colName);
     }

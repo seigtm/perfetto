@@ -47,6 +47,7 @@ SELECT
   OR $name GLOB 'GC: Wait For*'
   OR $name GLOB 'Recomposer:*'
   OR $name GLOB 'Compose:*'
+  OR $name GLOB 'draw-VRI*'
   OR (
     -- Some top level handler slices
     $depth = 0
@@ -93,3 +94,19 @@ SELECT
 FROM android_binder_txns AS tx
 WHERE
   NOT aidl_name IS NULL AND is_sync = 1;
+
+CREATE PERFETTO FUNCTION _is_relevant_notifications_blocking_call(
+    name STRING,
+    dur LONG
+)
+RETURNS BOOL AS
+SELECT
+  $name = 'NotificationStackScrollLayout#onMeasure'
+  AND $dur > 0
+  AND (
+    $name GLOB 'NotificationStackScrollLayout#onMeasure'
+    OR $name GLOB 'NotificationToplineView#onMeasure'
+    OR $name GLOB 'ExpNotRow#*'
+    OR $name GLOB 'NotificationShadeWindowView#onMeasure'
+    OR $name GLOB 'ImageFloatingTextView#onMeasure'
+  );
